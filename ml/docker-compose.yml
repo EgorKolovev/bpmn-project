@@ -1,0 +1,21 @@
+services:
+  ml:
+    build: .
+    ports:
+      - "8001:8001"
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3.1-flash-lite-preview}
+      - DAILY_SPEND_LIMIT_USD=${DAILY_SPEND_LIMIT_USD:-5.0}
+      - USAGE_DB_PATH=/data/usage.sqlite3
+    volumes:
+      - ml_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8001/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  ml_data:

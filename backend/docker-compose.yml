@@ -1,0 +1,34 @@
+services:
+  backend:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-bpmn}:${POSTGRES_PASSWORD:-bpmn}@db:5432/${POSTGRES_DB:-bpmn}
+      - ML_SERVICE_URL=http://ml:8001
+      - SESSION_SECRET_FILE=/data/session_secret.txt
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost,http://127.0.0.1,http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - backend_data:/data
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-bpmn}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-bpmn}
+      - POSTGRES_DB=${POSTGRES_DB:-bpmn}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bpmn}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  backend_data:
+  pgdata:
