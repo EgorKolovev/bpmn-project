@@ -3,12 +3,14 @@ import hashlib
 import hmac
 import os
 import secrets
+import time
 from pathlib import Path
 from typing import Optional
 from uuid import UUID
 
 
-TOKEN_VERSION = "v1"
+TOKEN_VERSION = "v2"
+DEFAULT_MAX_AGE_SECONDS = 7 * 24 * 3600  # 7 days
 
 
 def load_or_create_session_secret(
@@ -32,24 +34,47 @@ def load_or_create_session_secret(
     return secret
 
 
-def _signature_for_user(user_id: UUID, secret: str) -> str:
+def _compute_signature(user_id: UUID, issued_at: int, secret: str) -> str:
+    message = f"{user_id}:{issued_at}".encode("utf-8")
     digest = hmac.new(
         secret.encode("utf-8"),
-        str(user_id).encode("utf-8"),
+        message,
         hashlib.sha256,
     ).digest()
     return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
 
 
 def issue_session_token(user_id: UUID, secret: str) -> str:
-    return f"{TOKEN_VERSION}.{_signature_for_user(user_id, secret)}"
+    issued_at = int(time.time())
+    sig = _compute_signature(user_id, issued_at, secret)
+    return f"{TOKEN_VERSION}.{issued_at}.{sig}"
 
 
-def verify_session_token(user_id: UUID, token: Optional[str], secret: str) -> bool:
+def verify_session_token(
+    user_id: UUID,
+    token: Optional[str],
+    secret: str,
+    max_age_seconds: int = DEFAULT_MAX_AGE_SECONDS,
+) -> bool:
     if not token or not isinstance(token, str):
         return False
-    version, separator, signature = token.partition(".")
-    if version != TOKEN_VERSION or not separator or not signature:
+
+    parts = token.split(".")
+    if len(parts) != 3:
         return False
-    expected_signature = _signature_for_user(user_id, secret)
+
+    version, issued_at_str, signature = parts
+    if version != TOKEN_VERSION:
+        return False
+
+    try:
+        issued_at = int(issued_at_str)
+    except ValueError:
+        return False
+
+    # Check expiration
+    if time.time() - issued_at > max_age_seconds:
+        return False
+
+    expected_signature = _compute_signature(user_id, issued_at, secret)
     return hmac.compare_digest(signature, expected_signature)

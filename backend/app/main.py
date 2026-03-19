@@ -1,5 +1,7 @@
 import logging
+import time
 import uuid
+from collections import defaultdict
 from contextlib import asynccontextmanager
 from typing import Any, Dict, Optional
 
@@ -11,6 +13,7 @@ from sqlalchemy.orm import selectinload
 
 from app.config import (
     CORS_ALLOWED_ORIGINS,
+    INTERNAL_API_KEY,
     MAX_MESSAGE_CHARS,
     ML_SERVICE_URL,
     SESSION_SECRET,
@@ -30,6 +33,13 @@ logger = logging.getLogger(__name__)
 ml_http_client: Optional[httpx.AsyncClient] = None
 session_signing_secret: Optional[str] = None
 
+# Rate limiting: track timestamps per SID
+_rate_limit_map: Dict[str, list] = defaultdict(list)
+RATE_LIMIT_WINDOW = 10  # seconds
+RATE_LIMIT_MAX = 5  # max messages per window
+
+MAX_SESSIONS_PER_USER = 50
+
 
 class ClientInputError(Exception):
     pass
@@ -39,7 +49,16 @@ class ClientInputError(Exception):
 async def lifespan(app: FastAPI):
     global ml_http_client, session_signing_secret
     await init_db()
-    ml_http_client = httpx.AsyncClient(base_url=ML_SERVICE_URL, timeout=120.0)
+
+    headers = {}
+    if INTERNAL_API_KEY:
+        headers["X-Internal-Api-Key"] = INTERNAL_API_KEY
+
+    ml_http_client = httpx.AsyncClient(
+        base_url=ML_SERVICE_URL,
+        timeout=60.0,
+        headers=headers,
+    )
     session_signing_secret = load_or_create_session_secret(
         SESSION_SECRET,
         SESSION_SECRET_FILE,
@@ -57,6 +76,7 @@ sio = socketio.AsyncServer(
     cors_allowed_origins=CORS_ALLOWED_ORIGINS,
     logger=False,
     engineio_logger=False,
+    max_http_buffer_size=1_000_000,  # 1MB max message size
 )
 
 combined_app = socketio.ASGIApp(sio, app, socketio_path="/socket.io")
@@ -82,7 +102,18 @@ async def connect(sid, environ, auth):
 
 @sio.event
 async def disconnect(sid):
+    _rate_limit_map.pop(sid, None)
     logger.info("Client disconnected: %s", sid)
+
+
+def _check_rate_limit(sid: str) -> None:
+    now = time.time()
+    timestamps = _rate_limit_map[sid]
+    # Remove old entries outside window
+    _rate_limit_map[sid] = [t for t in timestamps if now - t < RATE_LIMIT_WINDOW]
+    if len(_rate_limit_map[sid]) >= RATE_LIMIT_MAX:
+        raise ClientInputError("Too many requests. Please wait a moment.")
+    _rate_limit_map[sid].append(now)
 
 
 @sio.on("new_action_event")
@@ -100,10 +131,12 @@ async def handle_action(sid, data):
         elif action == "open_session":
             await handle_open_session(sid, data)
         elif action == "message":
+            _check_rate_limit(sid)
             await handle_message(sid, data)
         else:
-            raise ClientInputError(f"Unknown action: {action}")
+            raise ClientInputError("Unknown action.")
     except ClientInputError as exc:
+        logger.warning("Client input error from %s: %s", sid, exc)
         await _emit_error(sid, str(exc))
     except Exception:
         logger.exception("Error handling action '%s'", action)
@@ -167,11 +200,10 @@ async def _resolve_user_identity(
     user_id = _try_parse_uuid(requested_user_id)
     if user_id and verify_session_token(user_id, requested_session_token, session_signing_secret):
         session_token = requested_session_token
-    elif user_id and not requested_session_token:
-        # Legacy browser state had only a user_id. Preserve those sessions once,
-        # then return a signed token for future reconnects.
-        session_token = issue_session_token(user_id, session_signing_secret)
     else:
+        # Invalid/expired/missing token — always create fresh identity
+        if user_id and requested_session_token:
+            logger.warning("Invalid or expired session token for user %s", user_id)
         user_id = uuid.uuid4()
         session_token = issue_session_token(user_id, session_signing_secret)
 
@@ -196,22 +228,11 @@ async def _get_bound_user_id(sid: str) -> uuid.UUID:
 
 
 def _extract_ml_error_detail(exc: httpx.HTTPStatusError) -> str:
-    if exc.response is None:
-        return "ML service request failed."
-
-    try:
-        payload = exc.response.json()
-    except ValueError:
-        payload = {}
-
-    detail = payload.get("detail") if isinstance(payload, dict) else None
-    if isinstance(detail, str) and detail.strip():
-        return detail
-
-    if exc.response.status_code == 429:
+    # Only return safe, generic messages to the client
+    if exc.response is not None and exc.response.status_code == 429:
         return "Daily usage cap reached. Try again later."
-
-    return "ML service request failed."
+    logger.error("ML service error: status=%s", exc.response.status_code if exc.response else "N/A")
+    return "Processing failed. Please try again."
 
 
 async def handle_init(sid, data):
@@ -222,6 +243,7 @@ async def handle_init(sid, data):
             select(Session)
             .where(Session.user_id == user_id)
             .order_by(Session.updated_at.desc())
+            .limit(MAX_SESSIONS_PER_USER)
         )
         sessions = result.scalars().all()
 
@@ -307,11 +329,17 @@ async def handle_message(sid, data):
                 await _emit_error(sid, _extract_ml_error_detail(exc))
                 return
             except Exception:
-                await _emit_error(sid, "ML service unavailable.")
+                logger.exception("ML service communication error")
+                await _emit_error(sid, "Processing failed. Please try again.")
                 return
 
-            bpmn_xml = ml_data["bpmn_xml"]
-            session_name = ml_data["session_name"]
+            bpmn_xml = ml_data.get("bpmn_xml", "")
+            session_name = ml_data.get("session_name", "Untitled")
+
+            if not bpmn_xml:
+                await _emit_error(sid, "Processing failed. Please try again.")
+                return
+
             new_session_id = uuid.uuid4()
 
             session = Session(
@@ -379,10 +407,15 @@ async def handle_message(sid, data):
             await _emit_error(sid, _extract_ml_error_detail(exc))
             return
         except Exception:
-            await _emit_error(sid, "ML service unavailable.")
+            logger.exception("ML service communication error")
+            await _emit_error(sid, "Processing failed. Please try again.")
             return
 
-        bpmn_xml = ml_data["bpmn_xml"]
+        bpmn_xml = ml_data.get("bpmn_xml", "")
+        if not bpmn_xml:
+            await _emit_error(sid, "Processing failed. Please try again.")
+            return
+
         msg_count = len(session.messages)
 
         db.add(

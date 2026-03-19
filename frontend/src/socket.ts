@@ -1,6 +1,8 @@
 import { io, Socket } from "socket.io-client";
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:8000";
+// In production, empty string means "same origin" (nginx proxies /socket.io/)
+// In dev, set VITE_BACKEND_URL=http://localhost:8000
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "";
 
 const socket: Socket = io(BACKEND_URL, {
   transports: ["websocket", "polling"],

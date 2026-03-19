@@ -1,7 +1,8 @@
 import os
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.budget import DailyBudgetExceededError, BudgetTracker
@@ -22,6 +23,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 llm_client: LLMClient = None
+INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY", "")
 
 
 @asynccontextmanager
@@ -56,6 +58,28 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="BPMN ML Service", version="1.0.0", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def verify_internal_api_key(request: Request, call_next):
+    # Skip auth for health check
+    if request.url.path == "/health":
+        return await call_next(request)
+
+    if INTERNAL_API_KEY:
+        provided_key = request.headers.get("X-Internal-Api-Key", "")
+        if provided_key != INTERNAL_API_KEY:
+            logger.warning(
+                "Unauthorized ML service request from %s to %s",
+                request.client.host if request.client else "unknown",
+                request.url.path,
+            )
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Unauthorized"},
+            )
+
+    return await call_next(request)
 
 
 class GenerateRequest(BaseModel):
@@ -108,10 +132,10 @@ async def generate(request: GenerateRequest):
         raise HTTPException(status_code=429, detail=str(exc))
     except LLMClientError as exc:
         logger.error("Generation failed: %s", exc)
-        raise HTTPException(status_code=exc.status_code, detail=exc.message)
+        raise HTTPException(status_code=exc.status_code, detail="Processing failed.")
     except Exception:
         logger.exception("Generation failed unexpectedly")
-        raise HTTPException(status_code=500, detail="Unexpected ML service error.")
+        raise HTTPException(status_code=500, detail="Processing failed.")
 
 
 @app.post("/edit", response_model=EditResponse)
@@ -124,7 +148,7 @@ async def edit(request: EditRequest):
         raise HTTPException(status_code=429, detail=str(exc))
     except LLMClientError as exc:
         logger.error("Edit failed: %s", exc)
-        raise HTTPException(status_code=exc.status_code, detail=exc.message)
+        raise HTTPException(status_code=exc.status_code, detail="Processing failed.")
     except Exception:
         logger.exception("Edit failed unexpectedly")
-        raise HTTPException(status_code=500, detail="Unexpected ML service error.")
+        raise HTTPException(status_code=500, detail="Processing failed.")

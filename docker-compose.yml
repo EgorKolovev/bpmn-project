@@ -9,13 +9,14 @@ services:
 
   backend:
     build: ./backend
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     environment:
-      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-bpmn}:${POSTGRES_PASSWORD:-bpmn}@db:5432/${POSTGRES_DB:-bpmn}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-bpmn}
       - ML_SERVICE_URL=http://ml:8001
       - SESSION_SECRET_FILE=/data/session_secret.txt
-      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost,http://127.0.0.1,http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173}
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY}
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-}
     depends_on:
       db:
         condition: service_healthy
@@ -34,6 +35,7 @@ services:
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3.1-flash-lite-preview}
       - DAILY_SPEND_LIMIT_USD=${DAILY_SPEND_LIMIT_USD:-5.0}
       - USAGE_DB_PATH=/data/usage.sqlite3
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY}
     volumes:
       - ml_data:/data
     restart: unless-stopped
@@ -41,13 +43,13 @@ services:
   db:
     image: postgres:16-alpine
     environment:
-      - POSTGRES_USER=${POSTGRES_USER:-bpmn}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-bpmn}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_DB=${POSTGRES_DB:-bpmn}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bpmn}"]
+      test: ["CMD-SHELL", "pg_isready -d ${POSTGRES_DB:-bpmn}"]
       interval: 5s
       timeout: 5s
       retries: 5

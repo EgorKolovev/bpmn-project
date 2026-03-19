@@ -4,7 +4,10 @@ dist/
 __pycache__/
 *.pyc
 .env
+.env.*
+!.env.example
 .DS_Store
 *.egg-info/
 .pytest_cache/
 .coverage
+*.sqlite3
