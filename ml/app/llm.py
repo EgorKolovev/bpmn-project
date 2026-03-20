@@ -22,21 +22,15 @@ class LLMClientError(Exception):
         super().__init__(message)
 
 
-class LLMClient:
-    def __init__(
-        self,
-        api_key: str,
-        budget_tracker: BudgetTracker,
-        model: str = "gemini-3.1-flash-lite-preview",
-        max_output_tokens: int = MAX_OUTPUT_TOKENS,
-    ):
-        self.api_key = api_key
+class GeminiBackend:
+    """Direct Google Gemini API backend."""
+
+    def __init__(self, api_key: str, model: str, max_output_tokens: int):
         self.model = model
-        self.budget_tracker = budget_tracker
         self.max_output_tokens = max_output_tokens
         self.http_client = httpx.AsyncClient(
-            timeout=120.0,
-            headers={"x-goog-api-key": self.api_key},
+            timeout=60.0,
+            headers={"x-goog-api-key": api_key},
         )
 
     def _build_payload(self, system_prompt: str, user_prompt: str) -> Dict[str, Any]:
@@ -57,7 +51,8 @@ class LLMClient:
             },
         }
 
-    async def _count_tokens(self, payload: Dict[str, Any]) -> int:
+    async def count_tokens(self, system_prompt: str, user_prompt: str) -> int:
+        payload = self._build_payload(system_prompt, user_prompt)
         response = await self.http_client.post(
             f"{GEMINI_API_URL}/{self.model}:countTokens",
             json={"generateContentRequest": payload},
@@ -69,10 +64,28 @@ class LLMClient:
             raise LLMClientError("Gemini API did not return token counts.")
         return int(total_tokens)
 
-    def _translate_http_error(self, exc: httpx.HTTPStatusError) -> LLMClientError:
+    async def generate(self, system_prompt: str, user_prompt: str) -> tuple[str, int, int]:
+        """Returns (text, prompt_tokens, output_tokens)."""
+        payload = self._build_payload(system_prompt, user_prompt)
+        response = await self.http_client.post(
+            f"{GEMINI_API_URL}/{self.model}:generateContent",
+            json=payload,
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        if "candidates" not in data or not data["candidates"]:
+            raise LLMClientError("Gemini API returned no completion.")
+
+        text = data["candidates"][0]["content"]["parts"][0]["text"]
+        usage = data.get("usageMetadata", {})
+        prompt_tokens = int(usage.get("promptTokenCount", 0))
+        output_tokens = int(usage.get("candidatesTokenCount", 0))
+        return text, prompt_tokens, output_tokens
+
+    def translate_http_error(self, exc: httpx.HTTPStatusError) -> LLMClientError:
         if exc.response is None:
             return LLMClientError("Gemini API request failed.")
-
         status_code = exc.response.status_code
         if status_code == 400:
             return LLMClientError("Gemini API rejected the request.")
@@ -82,53 +95,123 @@ class LLMClient:
             return LLMClientError("Gemini API rate limit reached. Try again shortly.", status_code=503)
         return LLMClientError("Gemini API request failed.")
 
-    async def _call_gemini(self, system_prompt: str, user_prompt: str) -> str:
-        payload = self._build_payload(system_prompt, user_prompt)
+    async def close(self):
+        await self.http_client.aclose()
+
+
+class PolzaBackend:
+    """OpenAI-compatible backend via polza.ai."""
+
+    def __init__(self, api_key: str, model: str, base_url: str, max_output_tokens: int):
+        self.model = model
+        self.max_output_tokens = max_output_tokens
+        self.http_client = httpx.AsyncClient(
+            timeout=60.0,
+            base_url=base_url,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+        )
+
+    async def count_tokens(self, system_prompt: str, user_prompt: str) -> int:
+        # Polza doesn't have a separate count endpoint; estimate from char count
+        # ~4 chars per token is a rough estimate
+        total_chars = len(system_prompt) + len(user_prompt)
+        return total_chars // 4
+
+    async def generate(self, system_prompt: str, user_prompt: str) -> tuple[str, int, int]:
+        """Returns (text, prompt_tokens, output_tokens)."""
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": 0.2,
+            "max_tokens": self.max_output_tokens,
+            "response_format": {"type": "json_object"},
+        }
+        response = await self.http_client.post("/chat/completions", json=payload)
+        response.raise_for_status()
+        data = response.json()
+
+        choices = data.get("choices", [])
+        if not choices:
+            raise LLMClientError("Polza API returned no completion.")
+
+        text = choices[0]["message"]["content"]
+        usage = data.get("usage", {})
+        prompt_tokens = int(usage.get("prompt_tokens", 0))
+        output_tokens = int(usage.get("completion_tokens", 0))
+        return text, prompt_tokens, output_tokens
+
+    def translate_http_error(self, exc: httpx.HTTPStatusError) -> LLMClientError:
+        if exc.response is None:
+            return LLMClientError("Polza API request failed.")
+        status_code = exc.response.status_code
+        if status_code == 400:
+            return LLMClientError("API rejected the request.")
+        if status_code in (401, 403):
+            return LLMClientError("API authentication failed.")
+        if status_code == 429:
+            return LLMClientError("API rate limit reached. Try again shortly.", status_code=503)
+        return LLMClientError("API request failed.")
+
+    async def close(self):
+        await self.http_client.aclose()
+
+
+class LLMClient:
+    def __init__(
+        self,
+        budget_tracker: BudgetTracker,
+        backend: GeminiBackend | PolzaBackend,
+        max_output_tokens: int = MAX_OUTPUT_TOKENS,
+    ):
+        self.backend = backend
+        self.budget_tracker = budget_tracker
+        self.max_output_tokens = max_output_tokens
+
+    async def _call_llm(self, system_prompt: str, user_prompt: str) -> str:
         reservation = None
 
         try:
-            prompt_tokens = await self._count_tokens(payload)
+            prompt_tokens = await self.backend.count_tokens(system_prompt, user_prompt)
             reservation = self.budget_tracker.reserve_for_call(prompt_tokens)
-            response = await self.http_client.post(
-                f"{GEMINI_API_URL}/{self.model}:generateContent",
-                json=payload,
+            text, actual_prompt_tokens, actual_output_tokens = await self.backend.generate(
+                system_prompt, user_prompt
             )
-            response.raise_for_status()
-            data = response.json()
         except DailyBudgetExceededError:
             raise
         except httpx.HTTPStatusError as exc:
             if reservation is not None:
                 self.budget_tracker.release_reservation(reservation)
-            raise self._translate_http_error(exc) from exc
+            raise self.backend.translate_http_error(exc) from exc
         except httpx.HTTPError as exc:
             if reservation is not None:
                 self.budget_tracker.release_reservation(reservation)
-            raise LLMClientError("Unable to reach Gemini API.") from exc
+            raise LLMClientError("Unable to reach LLM API.") from exc
         except Exception:
             if reservation is not None:
                 self.budget_tracker.release_reservation(reservation)
             raise
 
-        usage_metadata = data.get("usageMetadata", {})
-        actual_prompt_tokens = int(usage_metadata.get("promptTokenCount", prompt_tokens))
-        actual_output_tokens = int(usage_metadata.get("candidatesTokenCount", 0))
+        if not actual_prompt_tokens:
+            actual_prompt_tokens = prompt_tokens
+
         actual_cost = self.budget_tracker.finalize_call(
             reservation=reservation,
             prompt_tokens=actual_prompt_tokens,
             output_tokens=actual_output_tokens,
         )
         logger.info(
-            "Gemini request completed: %s prompt tokens, %s output tokens, $%s actual cost",
+            "LLM request completed: %s prompt tokens, %s output tokens, $%s actual cost",
             actual_prompt_tokens,
             actual_output_tokens,
             format_usd_from_nanodollars(actual_cost),
         )
 
-        if "candidates" not in data or not data["candidates"]:
-            raise LLMClientError("Gemini API returned no completion.")
-
-        text = data["candidates"][0]["content"]["parts"][0]["text"]
         return text
 
     def _extract_json(self, text: str) -> dict:
@@ -157,8 +240,9 @@ class LLMClient:
         user_prompt = f"Generate a BPMN 2.0 diagram for the following business process:\n\n{description}"
 
         max_retries = 3
+        error = None
         for attempt in range(max_retries):
-            raw = await self._call_gemini(SYSTEM_PROMPT_GENERATE, user_prompt)
+            raw = await self._call_llm(SYSTEM_PROMPT_GENERATE, user_prompt)
             result = self._extract_json(raw)
 
             if "bpmn_xml" not in result:
@@ -190,8 +274,9 @@ class LLMClient:
         )
 
         max_retries = 3
+        error = None
         for attempt in range(max_retries):
-            raw = await self._call_gemini(SYSTEM_PROMPT_EDIT, user_prompt)
+            raw = await self._call_llm(SYSTEM_PROMPT_EDIT, user_prompt)
             result = self._extract_json(raw)
 
             if "bpmn_xml" not in result:
@@ -215,4 +300,4 @@ class LLMClient:
         raise ValueError(f"Failed to produce valid edited BPMN XML after {max_retries} attempts. Last error: {error}")
 
     async def close(self):
-        await self.http_client.aclose()
+        await self.backend.close()

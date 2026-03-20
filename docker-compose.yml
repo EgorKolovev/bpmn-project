@@ -31,8 +31,12 @@ services:
     expose:
       - "8001"
     environment:
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - LLM_BACKEND=${LLM_BACKEND:-gemini}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3.1-flash-lite-preview}
+      - POLZA_API_KEY=${POLZA_API_KEY:-}
+      - POLZA_MODEL=${POLZA_MODEL:-google/gemini-3.1-flash-lite-preview}
+      - POLZA_API_URL=${POLZA_API_URL:-https://polza.ai/api/v1}
       - DAILY_SPEND_LIMIT_USD=${DAILY_SPEND_LIMIT_USD:-5.0}
       - USAGE_DB_PATH=/data/usage.sqlite3
       - INTERNAL_API_KEY=${INTERNAL_API_KEY}

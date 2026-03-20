@@ -10,14 +10,18 @@ from app.config import (
     BPMN_XML_CHAR_LIMIT,
     DAILY_SPEND_LIMIT_USD,
     DEFAULT_MODEL,
+    LLM_BACKEND,
     MAX_OUTPUT_TOKENS,
+    POLZA_API_KEY,
+    POLZA_API_URL,
+    POLZA_MODEL,
     REQUEST_CHAR_LIMIT,
     USAGE_BUDGET_TIMEZONE,
     USAGE_DB_PATH,
     get_input_price_per_million_usd,
     get_output_price_per_million_usd,
 )
-from app.llm import LLMClient, LLMClientError
+from app.llm import LLMClient, LLMClientError, GeminiBackend, PolzaBackend
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -29,9 +33,7 @@ INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY", "")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global llm_client
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY environment variable is required")
+
     model = os.environ.get("GEMINI_MODEL", DEFAULT_MODEL)
     budget_tracker = BudgetTracker(
         db_path=USAGE_DB_PATH,
@@ -41,17 +43,34 @@ async def lifespan(app: FastAPI):
         max_output_tokens=MAX_OUTPUT_TOKENS,
         timezone_name=USAGE_BUDGET_TIMEZONE,
     )
+
+    if LLM_BACKEND == "polza":
+        if not POLZA_API_KEY:
+            raise RuntimeError("POLZA_API_KEY environment variable is required when LLM_BACKEND=polza")
+        backend = PolzaBackend(
+            api_key=POLZA_API_KEY,
+            model=POLZA_MODEL,
+            base_url=POLZA_API_URL,
+            max_output_tokens=MAX_OUTPUT_TOKENS,
+        )
+        logger.info("ML Service using Polza backend, model: %s", POLZA_MODEL)
+    else:
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            raise RuntimeError("GEMINI_API_KEY environment variable is required when LLM_BACKEND=gemini")
+        backend = GeminiBackend(
+            api_key=api_key,
+            model=model,
+            max_output_tokens=MAX_OUTPUT_TOKENS,
+        )
+        logger.info("ML Service using Gemini backend, model: %s", model)
+
     llm_client = LLMClient(
-        api_key=api_key,
-        model=model,
+        backend=backend,
         budget_tracker=budget_tracker,
         max_output_tokens=MAX_OUTPUT_TOKENS,
     )
-    logger.info(
-        "ML Service started with model %s and daily cap $%.2f",
-        model,
-        DAILY_SPEND_LIMIT_USD,
-    )
+    logger.info("Daily cap $%.2f", DAILY_SPEND_LIMIT_USD)
     yield
     await llm_client.close()
     logger.info("ML Service shut down")
@@ -62,7 +81,6 @@ app = FastAPI(title="BPMN ML Service", version="1.0.0", lifespan=lifespan)
 
 @app.middleware("http")
 async def verify_internal_api_key(request: Request, call_next):
-    # Skip auth for health check
     if request.url.path == "/health":
         return await call_next(request)
 

@@ -9,6 +9,14 @@ USAGE_BUDGET_TIMEZONE = os.environ.get("USAGE_BUDGET_TIMEZONE", "UTC")
 REQUEST_CHAR_LIMIT = int(os.environ.get("REQUEST_CHAR_LIMIT", "12000"))
 BPMN_XML_CHAR_LIMIT = int(os.environ.get("BPMN_XML_CHAR_LIMIT", "250000"))
 
+# LLM backend: "gemini" (direct Google API) or "polza" (OpenAI-compatible via polza.ai)
+LLM_BACKEND = os.environ.get("LLM_BACKEND", "gemini")
+
+# Polza.ai settings
+POLZA_API_KEY = os.environ.get("POLZA_API_KEY", "")
+POLZA_API_URL = os.environ.get("POLZA_API_URL", "https://polza.ai/api/v1")
+POLZA_MODEL = os.environ.get("POLZA_MODEL", "google/gemini-3.1-flash-lite-preview")
+
 DEFAULT_PRICING_PER_MILLION_USD = {
     "gemini-3.1-flash-lite-preview": {
         "input": 0.25,
