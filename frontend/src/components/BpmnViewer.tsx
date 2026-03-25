@@ -132,10 +132,11 @@ const BpmnViewer: React.FC<BpmnViewerProps> = ({ xml }) => {
 
   const handleCopyImage = async () => {
     try {
-      const blob = await diagramToBlob();
-      await navigator.clipboard.write([
-        new ClipboardItem({ "image/png": blob }),
-      ]);
+      // Pass a Promise<Blob> to ClipboardItem to preserve user gesture context
+      const item = new ClipboardItem({
+        "image/png": diagramToBlob(),
+      });
+      await navigator.clipboard.write([item]);
       showFeedback("image");
     } catch (err) {
       console.error("Copy image failed:", err);

@@ -305,6 +305,25 @@ async def handle_open_session(sid, data):
     )
 
 
+async def _classify_input(text: str) -> None:
+    """Call ML classify endpoint; raise ClientInputError if input is not BPMN-related."""
+    try:
+        response = await ml_http_client.post("/classify", json={"text": text})
+        response.raise_for_status()
+        result = response.json()
+        if not result.get("is_valid", False):
+            reason = result.get("reason", "")
+            msg = "This doesn't look like a business process description."
+            if reason:
+                msg += f" {reason}"
+            raise ClientInputError(msg)
+    except httpx.HTTPStatusError:
+        # If classification fails, let the request through rather than blocking
+        logger.warning("Classification endpoint returned error; skipping check")
+    except httpx.HTTPError:
+        logger.warning("Classification endpoint unreachable; skipping check")
+
+
 async def handle_message(sid, data):
     text = _normalize_message_text(data.get("text"))
     user_id = await _get_bound_user_id(sid)
@@ -315,6 +334,9 @@ async def handle_message(sid, data):
     else:
         session_uuid = _parse_uuid(raw_session_id, "session_id")
         is_new_session = False
+
+    # Classify input before processing
+    await _classify_input(text)
 
     async with async_session() as db:
         if is_new_session:

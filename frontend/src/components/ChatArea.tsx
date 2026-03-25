@@ -2,12 +2,38 @@ import React, { useState, useRef, useEffect } from "react";
 import { HistoryEntry } from "../types";
 import MessageBubble from "./MessageBubble";
 
+const STARTER_PROMPTS = [
+  {
+    title: "Employee onboarding",
+    desc: "HR approval, document collection, IT setup, orientation",
+  },
+  {
+    title: "Order fulfillment",
+    desc: "Order received, payment, packaging, shipping, delivery",
+  },
+  {
+    title: "Loan application",
+    desc: "Application, credit check, approval/rejection, disbursement",
+  },
+  {
+    title: "Incident management",
+    desc: "Report, triage, investigation, resolution, closure",
+  },
+];
+
 interface ChatAreaProps {
   history: HistoryEntry[];
   onSendMessage: (text: string) => void;
   isLoading: boolean;
   sessionName: string | null;
 }
+
+const ArrowUpIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+    <line x1="12" y1="19" x2="12" y2="5" />
+    <polyline points="5 12 12 5 19 12" />
+  </svg>
+);
 
 const ChatArea: React.FC<ChatAreaProps> = ({
   history,
@@ -40,7 +66,6 @@ const ChatArea: React.FC<ChatAreaProps> = ({
     if (!text || isLoading) return;
     onSendMessage(text);
     setInputText("");
-    // Reset textarea height after send
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
@@ -53,15 +78,32 @@ const ChatArea: React.FC<ChatAreaProps> = ({
     }
   };
 
+  const handleStarterClick = (prompt: typeof STARTER_PROMPTS[0]) => {
+    if (isLoading) return;
+    const text = `${prompt.title}: ${prompt.desc}`;
+    onSendMessage(text);
+  };
+
   return (
     <div className="chat-area">
       {sessionName && <div className="chat-header">{sessionName}</div>}
       <div className="messages-container">
         {history.length === 0 && (
           <div className="empty-chat">
-            <h3>BPMN Diagram Generator</h3>
-            <p>Describe a business process to generate a BPMN diagram.</p>
-            <p>Then send follow-up messages to edit the diagram.</p>
+            <h3>BPMN Generator</h3>
+            <p>Describe a business process to generate a BPMN diagram</p>
+            <div className="starter-prompts">
+              {STARTER_PROMPTS.map((prompt, i) => (
+                <div
+                  key={i}
+                  className="starter-prompt"
+                  onClick={() => handleStarterClick(prompt)}
+                >
+                  <div className="starter-prompt-title">{prompt.title}</div>
+                  <div className="starter-prompt-desc">{prompt.desc}</div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
         {history.map((entry, index) => (
@@ -92,9 +134,16 @@ const ChatArea: React.FC<ChatAreaProps> = ({
           rows={1}
           disabled={isLoading}
         />
-        <button type="submit" disabled={isLoading || !inputText.trim()}>
-          Send
-        </button>
+        <div className="send-btn-wrapper">
+          <button
+            type="submit"
+            className="send-btn"
+            disabled={isLoading || !inputText.trim()}
+            title="Send message"
+          >
+            <ArrowUpIcon />
+          </button>
+        </div>
       </form>
     </div>
   );

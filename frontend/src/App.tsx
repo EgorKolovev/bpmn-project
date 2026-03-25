@@ -16,7 +16,6 @@ const App: React.FC = () => {
   const [sessionName, setSessionName] = useState<string | null>(null);
   const [isNewSession, setIsNewSession] = useState(true);
   const [connected, setConnected] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     socket.connect();
@@ -66,8 +65,11 @@ const App: React.FC = () => {
 
         case "error":
           setIsLoading(false);
-          setError(data.message);
-          setTimeout(() => setError(null), 5000);
+          // Show error inline in chat history
+          setCurrentHistory((prev) => [
+            ...prev,
+            { role: "assistant", error: data.message },
+          ]);
           break;
       }
     });
@@ -125,7 +127,6 @@ const App: React.FC = () => {
         sessionName={sessionName}
       />
       {!connected && <div className="connection-status">Connecting...</div>}
-      {error && <div className="error-toast">{error}</div>}
     </div>
   );
 };

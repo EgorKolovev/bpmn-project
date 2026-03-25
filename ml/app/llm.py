@@ -6,7 +6,7 @@ from typing import Any, Dict
 
 from app.budget import BudgetTracker, DailyBudgetExceededError, format_usd_from_nanodollars
 from app.config import MAX_OUTPUT_TOKENS
-from app.prompts import SYSTEM_PROMPT_GENERATE, SYSTEM_PROMPT_EDIT
+from app.prompts import SYSTEM_PROMPT_CLASSIFY, SYSTEM_PROMPT_GENERATE, SYSTEM_PROMPT_EDIT
 from app.validator import validate_bpmn_xml
 from app.bpmn_fix import ensure_incoming_outgoing, strip_bpmn_diagram
 
@@ -298,6 +298,16 @@ class LLMClient:
             )
 
         raise ValueError(f"Failed to produce valid edited BPMN XML after {max_retries} attempts. Last error: {error}")
+
+    async def classify(self, text: str) -> dict:
+        """Classify whether input is a valid BPMN request."""
+        logger.info("Calling LLM for input classification")
+        raw = await self._call_llm(SYSTEM_PROMPT_CLASSIFY, text)
+        result = self._extract_json(raw)
+        return {
+            "is_valid": bool(result.get("is_valid", False)),
+            "reason": result.get("reason", ""),
+        }
 
     async def close(self):
         await self.backend.close()

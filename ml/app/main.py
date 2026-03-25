@@ -135,9 +135,40 @@ class EditResponse(BaseModel):
     bpmn_xml: str
 
 
+class ClassifyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(
+        ...,
+        min_length=1,
+        max_length=REQUEST_CHAR_LIMIT,
+        description="User input to classify",
+    )
+
+
+class ClassifyResponse(BaseModel):
+    is_valid: bool
+    reason: str = ""
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.post("/classify", response_model=ClassifyResponse)
+async def classify(request: ClassifyRequest):
+    try:
+        result = await llm_client.classify(request.text)
+        return ClassifyResponse(**result)
+    except DailyBudgetExceededError as exc:
+        logger.warning("Classification blocked by budget cap: %s", exc)
+        raise HTTPException(status_code=429, detail=str(exc))
+    except LLMClientError as exc:
+        logger.error("Classification failed: %s", exc)
+        raise HTTPException(status_code=exc.status_code, detail="Processing failed.")
+    except Exception:
+        logger.exception("Classification failed unexpectedly")
+        raise HTTPException(status_code=500, detail="Processing failed.")
 
 
 @app.post("/generate", response_model=GenerateResponse)

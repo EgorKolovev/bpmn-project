@@ -7,6 +7,7 @@ export interface HistoryEntry {
   role: "user" | "assistant";
   text?: string;
   bpmn_xml?: string;
+  error?: string;
 }
 
 export interface InitData {
