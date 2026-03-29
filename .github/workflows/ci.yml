@@ -1,17 +1,10 @@
-name: CI / Deploy
+name: CI
 
 on:
-  workflow_dispatch:
-    inputs:
-      service:
-        description: "Service to deploy after build"
-        required: true
-        type: choice
-        options:
-          - db
-          - ml
-          - backend
-          - frontend
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
 
 jobs:
   test-backend:
@@ -54,9 +47,10 @@ jobs:
         run: npm test
         working-directory: frontend
 
-  # Собираем все три образа параллельно
   build-push:
     needs: [test-backend, test-ml, test-frontend]
+    # Сборка только при push в main, не на pull request
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -78,7 +72,6 @@ jobs:
           cache-from: type=registry,ref=registry.devfoundryteam.ru/bpmn-${{ matrix.service }}:cache
           cache-to: type=registry,ref=registry.devfoundryteam.ru/bpmn-${{ matrix.service }}:cache,mode=max
 
-  # Копируем .env и docker-compose.yml на сервер
   prepare-server:
     needs: build-push
     runs-on: ubuntu-latest
@@ -99,25 +92,3 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           source: ".env,docker-compose.yml"
           target: /opt/bpmn-project/
-
-  # Деплоим выбранный сервис
-  deploy:
-    needs: prepare-server
-    runs-on: ubuntu-latest
-    steps:
-      - name: Deploy ${{ inputs.service }} on server
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            cd /opt/bpmn-project
-
-            echo "${{ secrets.REGISTRY_PASSWORD }}" | \
-              docker login registry.devfoundryteam.ru \
-              -u "${{ secrets.REGISTRY_USERNAME }}" --password-stdin
-
-            docker compose pull ${{ inputs.service }}
-            docker compose up -d --no-deps ${{ inputs.service }}
-            docker compose ps ${{ inputs.service }}
