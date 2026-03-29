@@ -181,7 +181,7 @@ async def generate(request: GenerateRequest):
         raise HTTPException(status_code=429, detail=str(exc))
     except LLMClientError as exc:
         logger.error("Generation failed: %s", exc)
-        raise HTTPException(status_code=exc.status_code, detail="Processing failed.")
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
     except Exception:
         logger.exception("Generation failed unexpectedly")
         raise HTTPException(status_code=500, detail="Processing failed.")
@@ -197,7 +197,7 @@ async def edit(request: EditRequest):
         raise HTTPException(status_code=429, detail=str(exc))
     except LLMClientError as exc:
         logger.error("Edit failed: %s", exc)
-        raise HTTPException(status_code=exc.status_code, detail="Processing failed.")
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
     except Exception:
         logger.exception("Edit failed unexpectedly")
         raise HTTPException(status_code=500, detail="Processing failed.")
