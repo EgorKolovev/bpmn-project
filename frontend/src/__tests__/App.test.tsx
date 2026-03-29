@@ -34,7 +34,7 @@ import App from "../App";
 describe("App Component", () => {
   test("renders BPMN Generator title", () => {
     render(<App />);
-    expect(screen.getByText("BPMN Generator")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "BPMN Generator", level: 2 })).toBeInTheDocument();
   });
 
   test("renders new session button", () => {
@@ -44,7 +44,7 @@ describe("App Component", () => {
 
   test("renders empty chat message", () => {
     render(<App />);
-    expect(screen.getByText("BPMN Diagram Generator")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "BPMN Generator", level: 3 })).toBeInTheDocument();
   });
 
   test("renders input placeholder for new session", () => {
@@ -56,12 +56,12 @@ describe("App Component", () => {
 
   test("renders send button", () => {
     render(<App />);
-    expect(screen.getByText("Send")).toBeInTheDocument();
+    expect(screen.getByTitle("Send message")).toBeInTheDocument();
   });
 
   test("send button is disabled when input is empty", () => {
     render(<App />);
-    const sendButton = screen.getByText("Send");
+    const sendButton = screen.getByTitle("Send message");
     expect(sendButton).toBeDisabled();
   });
 });
