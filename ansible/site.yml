@@ -7,6 +7,7 @@
 #   ansible-playbook -i inventory/hosts.yml playbooks/registry.yml
 #   ansible-playbook -i inventory/hosts.yml playbooks/nginx.yml
 #   ansible-playbook -i inventory/hosts.yml playbooks/certbot.yml
+#   ansible-playbook -i inventory/hosts.yml playbooks/app.yml
 
 - name: Full server setup
   import_playbook: playbooks/docker.yml
@@ -19,3 +20,6 @@
 
 - name: Certbot setup
   import_playbook: playbooks/certbot.yml
+
+- name: App directory setup
+  import_playbook: playbooks/app.yml
