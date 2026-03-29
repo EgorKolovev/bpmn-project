@@ -1,0 +1,33 @@
+server {
+    listen 80;
+    server_name {{ app.domains | join(' ') }};
+
+    location / {
+        proxy_pass http://127.0.0.1:{{ app.port }};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+{% if app.websocket | default(false) %}
+
+        # WebSocket
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout {{ app.websocket_timeout | default(86400) }};
+{% endif %}
+{% if app.client_max_body_size is defined %}
+
+        client_max_body_size {{ app.client_max_body_size }};
+{% endif %}
+    }
+{% if app.extra_locations is defined %}
+
+    # Дополнительные location блоки (см. extra_locations в group_vars/all.yml)
+{% for loc in app.extra_locations %}
+    location {{ loc.path }} {
+        {{ loc.config | indent(8) }}
+    }
+{% endfor %}
+{% endif %}
+}

@@ -6,8 +6,12 @@ __pycache__/
 .env
 .env.*
 !.env.example
+!.env.prod
 .DS_Store
 *.egg-info/
 .pytest_cache/
 .coverage
 *.sqlite3
+
+ansible/inventory/group_vars/all.yml
+ansible/inventory/hosts.yml

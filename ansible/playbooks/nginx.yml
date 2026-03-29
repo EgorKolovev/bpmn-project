@@ -1,0 +1,73 @@
+---
+- name: Setup Nginx
+  hosts: deploy_hosts
+  become: true
+
+  tasks:
+    - name: Install Nginx
+      ansible.builtin.apt:
+        name: nginx
+        state: present
+        update_cache: true
+
+    - name: Remove default nginx site
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: Reload Nginx
+
+    - name: Deploy nginx configs for apps
+      ansible.builtin.template:
+        src: ../templates/nginx_app.conf.j2
+        dest: "/etc/nginx/sites-available/{{ app.name }}.conf"
+        mode: '0644'
+      loop: "{{ nginx_apps }}"
+      loop_control:
+        loop_var: app
+      notify: Reload Nginx
+
+    - name: Enable app nginx configs
+      ansible.builtin.file:
+        src: "/etc/nginx/sites-available/{{ app.name }}.conf"
+        dest: "/etc/nginx/sites-enabled/{{ app.name }}.conf"
+        state: link
+      loop: "{{ nginx_apps }}"
+      loop_control:
+        loop_var: app
+      notify: Reload Nginx
+
+    - name: Deploy nginx config for docker registry
+      ansible.builtin.template:
+        src: ../templates/nginx_app.conf.j2
+        dest: /etc/nginx/sites-available/registry.conf
+        mode: '0644'
+      vars:
+        app:
+          name: registry
+          domains: ["{{ nginx_registry_domain }}"]
+          port: "{{ registry_port }}"
+          client_max_body_size: 2048m
+      notify: Reload Nginx
+
+    - name: Enable registry nginx config
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/registry.conf
+        dest: /etc/nginx/sites-enabled/registry.conf
+        state: link
+      notify: Reload Nginx
+
+    - name: Start and enable Nginx
+      ansible.builtin.systemd:
+        name: nginx
+        state: started
+        enabled: true
+
+    - name: Test nginx config
+      ansible.builtin.command: nginx -t
+      changed_when: false
+
+  handlers:
+    - name: Reload Nginx
+      ansible.builtin.systemd:
+        name: nginx
+        state: reloaded

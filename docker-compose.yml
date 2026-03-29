@@ -1,14 +1,16 @@
 services:
   frontend:
     build: ./frontend
+    image: registry.devfoundryteam.ru/bpmn-frontend:latest
     ports:
-      - "80:80"
+      - "8080:80"
     depends_on:
       - backend
     restart: unless-stopped
 
   backend:
     build: ./backend
+    image: registry.devfoundryteam.ru/bpmn-backend:latest
     expose:
       - "8000"
     environment:
@@ -28,6 +30,7 @@ services:
 
   ml:
     build: ./ml
+    image: registry.devfoundryteam.ru/bpmn-ml:latest
     expose:
       - "8001"
     environment:
