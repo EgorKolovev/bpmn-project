@@ -1,0 +1,38 @@
+---
+# Запускать после nginx.yml — certbot --nginx читает конфиги nginx чтобы найти server_name
+- name: Setup Certbot
+  hosts: deploy_hosts
+  become: true
+
+  tasks:
+    - name: Install Certbot and Nginx plugin
+      ansible.builtin.apt:
+        name:
+          - certbot
+          - python3-certbot-nginx
+        state: present
+
+    - name: Obtain SSL certificates for apps
+      ansible.builtin.command:
+        cmd: >
+          certbot --nginx --non-interactive --agree-tos
+          --email {{ certbot_email }}
+          {% for domain in app.domains %}-d {{ domain }} {% endfor %}
+        creates: "/etc/letsencrypt/live/{{ app.domains[0] }}/fullchain.pem"
+      loop: "{{ nginx_apps }}"
+      loop_control:
+        loop_var: app
+
+    - name: Obtain SSL certificate for registry domain
+      ansible.builtin.command:
+        cmd: >
+          certbot --nginx --non-interactive --agree-tos
+          --email {{ certbot_email }}
+          -d {{ nginx_registry_domain }}
+        creates: "/etc/letsencrypt/live/{{ nginx_registry_domain }}/fullchain.pem"
+
+    - name: Enable certbot auto-renewal timer
+      ansible.builtin.systemd:
+        name: certbot.timer
+        state: started
+        enabled: true

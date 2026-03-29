@@ -1,0 +1,39 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      service:
+        description: "Service to deploy"
+        required: true
+        type: choice
+        options:
+          - db
+          - ml
+          - backend
+          - frontend
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy ${{ inputs.service }} on server
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd /opt/bpmn-project
+
+            # Логин в registry (нужен для pull образов)
+            echo "${{ secrets.REGISTRY_PASSWORD }}" | \
+              docker login registry.devfoundryteam.ru \
+              -u "${{ secrets.REGISTRY_USERNAME }}" --password-stdin
+
+            # Скачать свежий образ и перезапустить только этот сервис
+            docker compose pull ${{ inputs.service }}
+            docker compose up -d --no-deps ${{ inputs.service }}
+
+            # Показать статус
+            docker compose ps ${{ inputs.service }}

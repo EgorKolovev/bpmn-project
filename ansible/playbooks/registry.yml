@@ -1,0 +1,75 @@
+---
+# Запуск приватного Docker Registry с Basic Auth
+- name: Setup Docker Registry
+  hosts: deploy_hosts
+  become: true
+
+  tasks:
+    - name: Install htpasswd utility (apache2-utils)
+      ansible.builtin.apt:
+        name: apache2-utils
+        state: present
+
+    - name: Create registry directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - "{{ registry_data_dir }}"
+        - "{{ registry_auth_dir }}"
+
+    - name: Generate htpasswd file for registry auth
+      ansible.builtin.command:
+        cmd: >
+          htpasswd -Bbn {{ registry_username }} {{ registry_password }}
+        creates: "{{ registry_auth_dir }}/htpasswd"
+      register: htpasswd_output
+      no_log: true  # скрываем пароль из вывода
+
+    - name: Write htpasswd file
+      ansible.builtin.copy:
+        content: "{{ htpasswd_output.stdout }}"
+        dest: "{{ registry_auth_dir }}/htpasswd"
+        mode: '0600'
+      when: htpasswd_output.changed
+      no_log: true
+
+    - name: Pull Docker Registry image
+      community.docker.docker_image:
+        name: registry
+        tag: "2"
+        source: pull
+
+    - name: Run Docker Registry container
+      community.docker.docker_container:
+        name: registry
+        image: registry:2
+        state: started
+        restart_policy: always
+        ports:
+          - "127.0.0.1:{{ registry_port }}:5000"  # слушаем только localhost, nginx будет проксировать
+        volumes:
+          - "{{ registry_data_dir }}:/var/lib/registry"
+          - "{{ registry_auth_dir }}:/auth"
+        env:
+          REGISTRY_AUTH: htpasswd
+          REGISTRY_AUTH_HTPASSWD_REALM: "Registry Realm"
+          REGISTRY_AUTH_HTPASSWD_PATH: /auth/htpasswd
+          REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY: /var/lib/registry
+
+    - name: Verify registry is responding
+      ansible.builtin.uri:
+        url: "http://localhost:{{ registry_port }}/v2/"
+        status_code: [200, 401]  # 401 — норма, значит auth работает
+        url_username: "{{ registry_username }}"
+        url_password: "{{ registry_password }}"
+        force_basic_auth: true
+      register: registry_check
+      retries: 5
+      delay: 3
+      until: registry_check.status in [200, 401]
+
+    - name: Print registry status
+      ansible.builtin.debug:
+        msg: "Registry is up, status: {{ registry_check.status }}"

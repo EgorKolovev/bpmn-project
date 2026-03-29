@@ -1,0 +1,123 @@
+name: CI / Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      service:
+        description: "Service to deploy after build"
+        required: true
+        type: choice
+        options:
+          - db
+          - ml
+          - backend
+          - frontend
+
+jobs:
+  test-backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r backend/requirements.txt
+      - name: Run tests
+        run: pytest backend/tests/ -v
+
+  test-ml:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r ml/requirements.txt
+      - name: Run tests
+        run: pytest ml/tests/ -v
+
+  test-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+        working-directory: frontend
+      - name: Run tests
+        run: npm test
+        working-directory: frontend
+
+  # Собираем все три образа параллельно
+  build-push:
+    needs: [test-backend, test-ml, test-frontend]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [frontend, backend, ml]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Login to registry
+        uses: docker/login-action@v3
+        with:
+          registry: registry.devfoundryteam.ru
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+      - name: Build and push ${{ matrix.service }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ./${{ matrix.service }}
+          push: true
+          tags: registry.devfoundryteam.ru/bpmn-${{ matrix.service }}:latest
+          cache-from: type=registry,ref=registry.devfoundryteam.ru/bpmn-${{ matrix.service }}:cache
+          cache-to: type=registry,ref=registry.devfoundryteam.ru/bpmn-${{ matrix.service }}:cache,mode=max
+
+  # Копируем .env и docker-compose.yml на сервер
+  prepare-server:
+    needs: build-push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate .env from .env.prod
+        run: |
+          export POLZA_API_KEY="${{ secrets.POLZA_API_KEY }}"
+          export POSTGRES_PASSWORD="${{ secrets.POSTGRES_PASSWORD }}"
+          export INTERNAL_API_KEY="${{ secrets.INTERNAL_API_KEY }}"
+          export CORS_ALLOWED_ORIGINS="${{ secrets.CORS_ALLOWED_ORIGINS }}"
+          envsubst < .env.prod > .env
+      - name: Copy .env and docker-compose.yml to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: ".env,docker-compose.yml"
+          target: /opt/bpmn-project/
+
+  # Деплоим выбранный сервис
+  deploy:
+    needs: prepare-server
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy ${{ inputs.service }} on server
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd /opt/bpmn-project
+
+            echo "${{ secrets.REGISTRY_PASSWORD }}" | \
+              docker login registry.devfoundryteam.ru \
+              -u "${{ secrets.REGISTRY_USERNAME }}" --password-stdin
+
+            docker compose pull ${{ inputs.service }}
+            docker compose up -d --no-deps ${{ inputs.service }}
+            docker compose ps ${{ inputs.service }}

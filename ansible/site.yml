@@ -1,0 +1,21 @@
+---
+# Главный плейбук — запускает всё по порядку
+# Запуск: ansible-playbook -i inventory/hosts.yml site.yml
+#
+# Или запустить отдельные части:
+#   ansible-playbook -i inventory/hosts.yml playbooks/docker.yml
+#   ansible-playbook -i inventory/hosts.yml playbooks/registry.yml
+#   ansible-playbook -i inventory/hosts.yml playbooks/nginx.yml
+#   ansible-playbook -i inventory/hosts.yml playbooks/certbot.yml
+
+- name: Full server setup
+  import_playbook: playbooks/docker.yml
+
+- name: Docker Registry setup
+  import_playbook: playbooks/registry.yml
+
+- name: Nginx setup
+  import_playbook: playbooks/nginx_certbot.yml
+
+- name: Certbot setup
+  import_playbook: playbooks/certbot.yml
