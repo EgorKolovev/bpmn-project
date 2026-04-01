@@ -16,6 +16,7 @@ const App: React.FC = () => {
   const [sessionName, setSessionName] = useState<string | null>(null);
   const [isNewSession, setIsNewSession] = useState(true);
   const [connected, setConnected] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
     socket.connect();
@@ -85,6 +86,7 @@ const App: React.FC = () => {
   const handleSelectSession = useCallback((sessionId: string) => {
     setActiveSessionId(sessionId);
     setIsNewSession(false);
+    setSidebarOpen(false);
     socket.emit("new_action_event", {
       action: "open_session",
       session_id: sessionId,
@@ -96,6 +98,7 @@ const App: React.FC = () => {
     setCurrentHistory([]);
     setSessionName(null);
     setIsNewSession(true);
+    setSidebarOpen(false);
   }, []);
 
   const handleSendMessage = useCallback(
@@ -114,17 +117,22 @@ const App: React.FC = () => {
 
   return (
     <div className="app">
+      {sidebarOpen && (
+        <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />
+      )}
       <Sidebar
         sessions={sessions}
         activeSessionId={activeSessionId}
         onSelectSession={handleSelectSession}
         onNewSession={handleNewSession}
+        isOpen={sidebarOpen}
       />
       <ChatArea
         history={currentHistory}
         onSendMessage={handleSendMessage}
         isLoading={isLoading}
         sessionName={sessionName}
+        onMenuToggle={() => setSidebarOpen((v) => !v)}
       />
       {!connected && <div className="connection-status">Connecting...</div>}
     </div>

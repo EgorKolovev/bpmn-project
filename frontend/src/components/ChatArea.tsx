@@ -26,6 +26,7 @@ interface ChatAreaProps {
   onSendMessage: (text: string) => void;
   isLoading: boolean;
   sessionName: string | null;
+  onMenuToggle: () => void;
 }
 
 const ArrowUpIcon = () => (
@@ -35,11 +36,20 @@ const ArrowUpIcon = () => (
   </svg>
 );
 
+const MenuIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+    <line x1="3" y1="6" x2="21" y2="6" />
+    <line x1="3" y1="12" x2="21" y2="12" />
+    <line x1="3" y1="18" x2="21" y2="18" />
+  </svg>
+);
+
 const ChatArea: React.FC<ChatAreaProps> = ({
   history,
   onSendMessage,
   isLoading,
   sessionName,
+  onMenuToggle,
 }) => {
   const [inputText, setInputText] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -86,7 +96,12 @@ const ChatArea: React.FC<ChatAreaProps> = ({
 
   return (
     <div className="chat-area">
-      {sessionName && <div className="chat-header">{sessionName}</div>}
+      <div className="chat-header">
+        <button className="menu-btn" onClick={onMenuToggle} title="Toggle sidebar">
+          <MenuIcon />
+        </button>
+        <span className="chat-header-title">{sessionName || "New Chat"}</span>
+      </div>
       <div className="messages-container">
         {history.length === 0 && (
           <div className="empty-chat">

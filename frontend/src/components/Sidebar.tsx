@@ -6,6 +6,7 @@ interface SidebarProps {
   activeSessionId: string | null;
   onSelectSession: (sessionId: string) => void;
   onNewSession: () => void;
+  isOpen: boolean;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -13,9 +14,10 @@ const Sidebar: React.FC<SidebarProps> = ({
   activeSessionId,
   onSelectSession,
   onNewSession,
+  isOpen,
 }) => {
   return (
-    <div className="sidebar">
+    <div className={`sidebar ${isOpen ? "sidebar-open" : ""}`}>
       <div className="sidebar-header">
         <h2>BPMN Generator</h2>
         <button className="new-session-btn" onClick={onNewSession}>
