@@ -11,11 +11,17 @@ from tests.conftest import VALID_BPMN_XML
 os.environ["GEMINI_API_KEY"] = "test-key-for-unit-tests"
 
 from app.main import app
+import app.main as _main
+
+# Derive the API key the middleware will verify against; tests attach this
+# as a default header on TestClient so middleware passes.
+_INTERNAL_KEY = _main.INTERNAL_API_KEY
 
 
 @pytest.fixture
 def client():
-    return TestClient(app)
+    headers = {"X-Internal-Api-Key": _INTERNAL_KEY} if _INTERNAL_KEY else {}
+    return TestClient(app, headers=headers)
 
 
 class TestHealthEndpoint:

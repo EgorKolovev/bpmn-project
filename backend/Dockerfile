@@ -8,8 +8,11 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app/ ./app/
+COPY tests/ ./tests/
+COPY pytest.ini ./
 
 RUN mkdir -p /data && chown appuser:appuser /data
+RUN chown -R appuser:appuser /app
 
 USER appuser
 
