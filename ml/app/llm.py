@@ -8,7 +8,7 @@ from app.budget import BudgetTracker, DailyBudgetExceededError, format_usd_from_
 from app.config import MAX_OUTPUT_TOKENS
 from app.prompts import SYSTEM_PROMPT_CLASSIFY, SYSTEM_PROMPT_GENERATE, SYSTEM_PROMPT_EDIT
 from app.validator import validate_bpmn_xml, get_bpmn_warnings
-from app.bpmn_fix import ensure_incoming_outgoing, strip_bpmn_diagram
+from app.bpmn_fix import ensure_incoming_outgoing, ensure_lane_refs, strip_bpmn_diagram
 
 logger = logging.getLogger(__name__)
 
@@ -268,6 +268,7 @@ class LLMClient:
             error = validate_bpmn_xml(bpmn_xml)
             if error is None:
                 bpmn_xml = ensure_incoming_outgoing(bpmn_xml)
+                bpmn_xml = ensure_lane_refs(bpmn_xml)
                 for w in get_bpmn_warnings(bpmn_xml):
                     logger.warning("BPMN warning (generate): %s", w)
                 return {"bpmn_xml": bpmn_xml, "session_name": result["session_name"]}
@@ -302,6 +303,7 @@ class LLMClient:
             error = validate_bpmn_xml(new_xml)
             if error is None:
                 new_xml = ensure_incoming_outgoing(new_xml)
+                new_xml = ensure_lane_refs(new_xml)
                 for w in get_bpmn_warnings(new_xml):
                     logger.warning("BPMN warning (edit): %s", w)
                 return {"bpmn_xml": new_xml}

@@ -152,3 +152,117 @@ def strip_bpmn_diagram(xml_string: str) -> str:
         xml_string,
         flags=re.IGNORECASE,
     )
+
+
+def ensure_lane_refs(xml_string: str) -> str:
+    """If the process has a <bpmn:laneSet>, make sure EVERY flow node is
+    referenced in exactly ONE <bpmn:flowNodeRef>. Fix-ups:
+
+      * Flow node referenced in ZERO lanes → append to the FIRST lane.
+      * Flow node referenced in MORE THAN ONE lane → keep only the first
+        reference, drop duplicates.
+      * Stray flowNodeRef pointing to a non-existent id → drop it.
+
+    If there's no laneSet, return the XML unchanged.
+
+    Idempotent.
+    """
+    try:
+        root = SafeET.fromstring(xml_string)
+    except SafeET.ParseError as e:
+        logger.warning(f"Cannot fix lane refs - XML parse error: {e}")
+        return xml_string
+
+    process = root.find(f".//{{{BPMN_NS}}}process")
+    if process is None:
+        process = root.find(".//process")
+    if process is None:
+        return xml_string
+
+    # Find laneSet (allow either namespaced or unnamespaced)
+    lane_set = None
+    for elem in list(process):
+        if _get_local_tag(elem) == "laneSet":
+            lane_set = elem
+            break
+    if lane_set is None:
+        return xml_string
+
+    process_ns = _get_namespace(process)
+
+    # Collect every flow node id (non-flow tags excluded)
+    flow_node_ids: list[str] = []
+    flow_node_id_set: set[str] = set()
+    for elem in list(process):
+        tag = _get_local_tag(elem)
+        if tag in NON_FLOW_NODE_TAGS:
+            continue
+        if eid := elem.get("id"):
+            flow_node_ids.append(eid)
+            flow_node_id_set.add(eid)
+
+    # Enumerate lanes and their current flowNodeRef lists
+    lanes: list[object] = [
+        child for child in list(lane_set) if _get_local_tag(child) == "lane"
+    ]
+    if not lanes:
+        # laneSet exists but has no lanes — leave as-is (unusual)
+        return xml_string
+
+    # Build current assignment: node_id -> [lane_idx] (first-seen-first)
+    assignments: dict[str, list[int]] = {nid: [] for nid in flow_node_ids}
+    for lane_idx, lane in enumerate(lanes):
+        for child in list(lane):
+            if _get_local_tag(child) == "flowNodeRef":
+                ref = (child.text or "").strip()
+                if ref in assignments:
+                    assignments[ref].append(lane_idx)
+
+    # Rebuild each lane's flowNodeRef list:
+    #   * Remove duplicates (keep the first lane that claims the node)
+    #   * Drop stray refs (to non-existent ids) — implicitly dropped because
+    #     we rebuild from a curated list
+    claimed: set[str] = set()
+    # First pass: each node goes to its first-claiming lane (stable order)
+    node_to_lane: dict[str, int] = {}
+    for lane_idx, lane in enumerate(lanes):
+        for child in list(lane):
+            if _get_local_tag(child) != "flowNodeRef":
+                continue
+            ref = (child.text or "").strip()
+            if ref in flow_node_id_set and ref not in claimed:
+                node_to_lane[ref] = lane_idx
+                claimed.add(ref)
+
+    # Second pass: any unclaimed flow node → first lane
+    for nid in flow_node_ids:
+        if nid not in claimed:
+            node_to_lane[nid] = 0
+            claimed.add(nid)
+
+    # Wipe existing flowNodeRef children and re-populate
+    for lane in lanes:
+        for child in list(lane):
+            if _get_local_tag(child) == "flowNodeRef":
+                lane.remove(child)
+
+    # Append refs back in the order flow nodes appear in the process
+    tag_name = f"{{{process_ns}}}flowNodeRef" if process_ns else "flowNodeRef"
+    for nid in flow_node_ids:
+        target_lane = lanes[node_to_lane[nid]]
+        ref_elem = XmlET.SubElement(target_lane, tag_name)
+        ref_elem.text = nid
+
+    # Serialize back
+    XmlET.register_namespace("bpmn", BPMN_NS)
+    XmlET.register_namespace("bpmndi", "http://www.omg.org/spec/BPMN/20100524/DI")
+    XmlET.register_namespace("dc", "http://www.omg.org/spec/DD/20100524/DC")
+    XmlET.register_namespace("di", "http://www.omg.org/spec/DD/20100524/DI")
+
+    result = XmlET.tostring(root, encoding="unicode", xml_declaration=True)
+    logger.info(
+        "Ensured lane refs: %d flow nodes across %d lanes",
+        len(flow_node_ids),
+        len(lanes),
+    )
+    return result

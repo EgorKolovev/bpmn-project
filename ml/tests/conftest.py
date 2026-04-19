@@ -256,6 +256,66 @@ def has_labeled_branch_from_gateway(xml_string: str) -> bool:
     return False
 
 
+def extract_lanes(xml_string: str) -> dict[str, list[str]]:
+    """Return {lane_name: [flow_node_ids]} for every lane in the process."""
+    process = _parse_process(xml_string)
+    if process is None:
+        return {}
+    out: dict[str, list[str]] = {}
+    for child in list(process):
+        tag = child.tag.split("}", 1)[-1] if "}" in child.tag else child.tag
+        if tag != "laneSet":
+            continue
+        for lane in list(child):
+            ltag = lane.tag.split("}", 1)[-1] if "}" in lane.tag else lane.tag
+            if ltag != "lane":
+                continue
+            name = lane.get("name", "") or lane.get("id", "")
+            refs = []
+            for ref in list(lane):
+                rtag = ref.tag.split("}", 1)[-1] if "}" in ref.tag else ref.tag
+                if rtag == "flowNodeRef":
+                    rid = (ref.text or "").strip()
+                    if rid:
+                        refs.append(rid)
+            out[name] = refs
+    return out
+
+
+def has_lanes(xml_string: str) -> bool:
+    return bool(extract_lanes(xml_string))
+
+
+def all_flow_nodes_in_lanes(xml_string: str) -> tuple[bool, list[str]]:
+    """Given a process with lanes, verify every flow node has exactly one
+    flowNodeRef. Returns (ok, missing_or_duplicate_ids)."""
+    lanes = extract_lanes(xml_string)
+    if not lanes:
+        return False, []
+    process = _parse_process(xml_string)
+    if process is None:
+        return False, []
+    flow_node_ids: list[str] = []
+    for elem in list(process):
+        tag = elem.tag.split("}", 1)[-1] if "}" in elem.tag else elem.tag
+        if tag in {
+            "sequenceFlow", "laneSet", "messageFlow", "association",
+            "dataObject", "dataObjectReference", "textAnnotation",
+            "documentation", "extensionElements", "ioSpecification",
+        }:
+            continue
+        if eid := elem.get("id"):
+            flow_node_ids.append(eid)
+
+    assignments: dict[str, int] = {nid: 0 for nid in flow_node_ids}
+    for refs in lanes.values():
+        for rid in refs:
+            if rid in assignments:
+                assignments[rid] += 1
+    bad = [nid for nid, cnt in assignments.items() if cnt != 1]
+    return len(bad) == 0, bad
+
+
 def has_cycle(xml_string: str) -> bool:
     """Detect whether the process graph contains any cycle (back-edge).
 

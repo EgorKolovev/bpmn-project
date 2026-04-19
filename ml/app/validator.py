@@ -113,6 +113,39 @@ def validate_bpmn_xml(xml_string: str) -> Optional[str]:
         if target not in flow_node_ids:
             return f"sequenceFlow references unknown targetRef '{target}'"
 
+    # Rule: if laneSet exists, each flow node must be in EXACTLY ONE lane.
+    lane_set = None
+    for elem in all_elements:
+        if _local(elem.tag) == "laneSet":
+            lane_set = elem
+            break
+
+    if lane_set is not None:
+        # node_id -> count of lanes that reference it
+        ref_count: dict[str, int] = {nid: 0 for nid in flow_node_ids}
+        for lane in list(lane_set):
+            if _local(lane.tag) != "lane":
+                continue
+            for child in list(lane):
+                if _local(child.tag) != "flowNodeRef":
+                    continue
+                ref = (child.text or "").strip()
+                if ref in ref_count:
+                    ref_count[ref] += 1
+                elif ref:
+                    # A flowNodeRef pointing to a non-existent flow node — stray.
+                    return (
+                        f"lane contains <flowNodeRef>{ref}</flowNodeRef> but "
+                        f"no flow node with id '{ref}' exists in the process."
+                    )
+        dup = [nid for nid, c in ref_count.items() if c > 1]
+        if dup:
+            return (
+                f"flow node(s) {', '.join(dup)} referenced by more than one "
+                f"<bpmn:lane>. Each flow node must belong to exactly one lane."
+            )
+        # Missing refs are soft-fixed by ensure_lane_refs; we don't block.
+
     # Rule: every diverging exclusiveGateway (2+ outgoing flows) must have at
     # least ONE outgoing flow labeled with `name` or <conditionExpression>.
     outgoing_by_gateway: dict[str, list[object]] = {

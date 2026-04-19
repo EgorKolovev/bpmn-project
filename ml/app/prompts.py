@@ -115,7 +115,49 @@ SECTION 3 — Language matching (CRITICAL)
   `name` / condition text follow the user's language.
 
 ==========================================================================
-SECTION 4 — Few-shot examples
+SECTION 4 — Swimlanes (role / actor separation)
+==========================================================================
+If the description explicitly mentions DIFFERENT ROLES, DEPARTMENTS or
+ACTORS that perform different steps (e.g. "Менеджер", "Юрист",
+"Директор", "Бухгалтерия", "Руководитель"; "Manager", "Legal", "HR",
+"Approver") — you MUST group the flow nodes into `<bpmn:laneSet>`
+containing one `<bpmn:lane>` per role.
+
+Rules for lanes:
+  * The `<bpmn:laneSet>` element MUST appear AS THE FIRST CHILD of
+    `<bpmn:process>`, BEFORE any startEvent/task/gateway.
+  * Each `<bpmn:lane>` MUST have an `id` and a `name` (the role label —
+    in the user's language).
+  * Each `<bpmn:lane>` contains one `<bpmn:flowNodeRef>{flow-node-id}</bpmn:flowNodeRef>`
+    child per flow node performed by that role.
+  * EVERY flow node in the process (including startEvent, endEvent,
+    gateways) MUST be referenced in EXACTLY ONE `<bpmn:flowNodeRef>`.
+  * If the description does NOT mention roles — DO NOT generate a
+    `<bpmn:laneSet>`. Produce a flat process without lanes.
+  * Put startEvent in the role-lane where the process actually starts
+    (usually the initiator). Put endEvent in the lane where the last
+    action happens.
+
+Example lane structure (Russian input, two roles):
+<bpmn:process id="Process_1" isExecutable="true">
+  <bpmn:laneSet id="LaneSet_1">
+    <bpmn:lane id="Lane_Manager" name="Менеджер">
+      <bpmn:flowNodeRef>Start_1</bpmn:flowNodeRef>
+      <bpmn:flowNodeRef>Task_1</bpmn:flowNodeRef>
+    </bpmn:lane>
+    <bpmn:lane id="Lane_Director" name="Директор">
+      <bpmn:flowNodeRef>Task_2</bpmn:flowNodeRef>
+      <bpmn:flowNodeRef>End_1</bpmn:flowNodeRef>
+    </bpmn:lane>
+  </bpmn:laneSet>
+  <!-- ...startEvent, tasks, sequenceFlows... -->
+</bpmn:process>
+
+Cross-lane sequenceFlows (a flow whose source and target are in different
+lanes) are LEGAL and expected — do not avoid them.
+
+==========================================================================
+SECTION 5 — Few-shot examples
 ==========================================================================
 
 EXAMPLE A — Linear process (English input → English names)
@@ -276,8 +318,79 @@ Key points:
   </bpmn:process>
 </bpmn:definitions>
 
+EXAMPLE D — Swimlanes (Russian, two roles, with a decision)
+------------------------------------------------------------
+User: "Согласование заявки: Менеджер создаёт заявку. Директор рассматривает.
+       Если одобрено — менеджер отправляет клиенту. Если отклонено —
+       менеджер уведомляет клиента об отказе."
+
+Key points:
+  * TWO lanes: "Менеджер" and "Директор"
+  * laneSet is the first child of process
+  * Every flow node appears in exactly one flowNodeRef
+  * Cross-lane sequenceFlows are normal (e.g. Flow_2: Менеджер → Директор)
+
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="Process_1" isExecutable="true">
+    <bpmn:laneSet id="LaneSet_1">
+      <bpmn:lane id="Lane_Manager" name="Менеджер">
+        <bpmn:flowNodeRef>Start_1</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_1</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_3</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_4</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>End_1</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Director" name="Директор">
+        <bpmn:flowNodeRef>Task_2</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Gateway_1</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="Start_1">
+      <bpmn:outgoing>Flow_1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:task id="Task_1" name="Создать заявку">
+      <bpmn:incoming>Flow_1</bpmn:incoming>
+      <bpmn:outgoing>Flow_2</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:task id="Task_2" name="Рассмотреть заявку">
+      <bpmn:incoming>Flow_2</bpmn:incoming>
+      <bpmn:outgoing>Flow_3</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:exclusiveGateway id="Gateway_1" name="Решение">
+      <bpmn:incoming>Flow_3</bpmn:incoming>
+      <bpmn:outgoing>Flow_4</bpmn:outgoing>
+      <bpmn:outgoing>Flow_5</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:task id="Task_3" name="Отправить клиенту">
+      <bpmn:incoming>Flow_4</bpmn:incoming>
+      <bpmn:outgoing>Flow_6</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:task id="Task_4" name="Уведомить об отказе">
+      <bpmn:incoming>Flow_5</bpmn:incoming>
+      <bpmn:outgoing>Flow_7</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:endEvent id="End_1">
+      <bpmn:incoming>Flow_6</bpmn:incoming>
+      <bpmn:incoming>Flow_7</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="Flow_1" sourceRef="Start_1" targetRef="Task_1"/>
+    <bpmn:sequenceFlow id="Flow_2" sourceRef="Task_1" targetRef="Task_2"/>
+    <bpmn:sequenceFlow id="Flow_3" sourceRef="Task_2" targetRef="Gateway_1"/>
+    <bpmn:sequenceFlow id="Flow_4" name="Одобрено" sourceRef="Gateway_1" targetRef="Task_3">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">одобрено</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_5" name="Отклонено" sourceRef="Gateway_1" targetRef="Task_4">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">отклонено</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_6" sourceRef="Task_3" targetRef="End_1"/>
+    <bpmn:sequenceFlow id="Flow_7" sourceRef="Task_4" targetRef="End_1"/>
+  </bpmn:process>
+</bpmn:definitions>
+
 ==========================================================================
-SECTION 5 — Output format
+SECTION 6 — Output format
 ==========================================================================
 You MUST respond with ONLY a JSON object in this exact format (no markdown,
 no code blocks):
@@ -319,6 +432,23 @@ BRANCHING / LOOPS (use when instruction implies them)
 - If two branches need to rejoin before the next task, add a converging
   `exclusiveGateway` (or `parallelGateway` for parallel flows) as the merge
   point.
+
+==========================================================================
+LANES (Swimlanes) — preservation and updates
+==========================================================================
+- If the existing XML contains a `<bpmn:laneSet>` — any new flow node
+  (task, gateway, event) you add MUST be referenced in exactly one
+  `<bpmn:flowNodeRef>` inside one `<bpmn:lane>`.
+- Pick the most relevant lane from the user's instruction (e.g. "HR
+  approves" → add the new task to the "HR" lane).
+- If uncertain which role, use the lane of the UPSTREAM task the new
+  node follows.
+- Never leave a flow node floating outside all lanes when lanes exist.
+- If the existing XML has NO `<bpmn:laneSet>` and the instruction doesn't
+  introduce roles — keep it lane-less.
+- If the instruction introduces NEW roles in a previously lane-less
+  diagram — create a full `<bpmn:laneSet>` now and re-group ALL existing
+  flow nodes plus the new ones.
 
 ==========================================================================
 LANGUAGE PRESERVATION (CRITICAL)
