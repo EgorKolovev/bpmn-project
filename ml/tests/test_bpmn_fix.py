@@ -151,6 +151,78 @@ class TestEnsureIncomingOutgoing:
                     assert in1 == in2
                     assert out1 == out2
 
+    def test_handles_rework_cycle(self):
+        """Back-edge (loop) from gateway to earlier task — all refs must land
+        correctly on both forward and backward flows.
+        """
+        xml = """<?xml version="1.0" encoding="UTF-8"?>
+        <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                          id="D1" targetNamespace="http://bpmn.io/schema/bpmn">
+          <bpmn:process id="P1">
+            <bpmn:startEvent id="S1"/>
+            <bpmn:task id="T1" name="Review"/>
+            <bpmn:exclusiveGateway id="G1"/>
+            <bpmn:task id="T2" name="Rework"/>
+            <bpmn:endEvent id="E1"/>
+            <bpmn:sequenceFlow id="F1" sourceRef="S1" targetRef="T1"/>
+            <bpmn:sequenceFlow id="F2" sourceRef="T1" targetRef="G1"/>
+            <bpmn:sequenceFlow id="F3" name="Needs rework" sourceRef="G1" targetRef="T2"/>
+            <bpmn:sequenceFlow id="F4" sourceRef="T2" targetRef="T1"/>
+            <bpmn:sequenceFlow id="F5" name="Approved" sourceRef="G1" targetRef="E1"/>
+          </bpmn:process>
+        </bpmn:definitions>"""
+
+        result = ensure_incoming_outgoing(xml)
+        root = ET.fromstring(result)
+        process = root.find(f".//{{{BPMN_NS}}}process")
+
+        # Review (T1) has TWO incoming flows: F1 (from Start) + F4 (back-edge from Rework)
+        t1 = process.find(f"{{{BPMN_NS}}}task[@id='T1']")
+        t1_in = [e.text for e in t1.findall(f"{{{BPMN_NS}}}incoming")]
+        t1_out = [e.text for e in t1.findall(f"{{{BPMN_NS}}}outgoing")]
+        assert sorted(t1_in) == ["F1", "F4"]
+        assert t1_out == ["F2"]
+
+        # Gateway G1 has outgoing to both rework (T2) and end (E1)
+        g1 = process.find(f"{{{BPMN_NS}}}exclusiveGateway[@id='G1']")
+        g1_out = [e.text for e in g1.findall(f"{{{BPMN_NS}}}outgoing")]
+        assert sorted(g1_out) == ["F3", "F5"]
+
+        # Rework task points back to Review
+        t2 = process.find(f"{{{BPMN_NS}}}task[@id='T2']")
+        t2_out = [e.text for e in t2.findall(f"{{{BPMN_NS}}}outgoing")]
+        assert t2_out == ["F4"]
+
+    def test_handles_multiple_incoming_on_merge_gateway(self):
+        """Converging exclusiveGateway with 2 incoming branches."""
+        xml = """<?xml version="1.0" encoding="UTF-8"?>
+        <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                          id="D1" targetNamespace="http://bpmn.io/schema/bpmn">
+          <bpmn:process id="P1">
+            <bpmn:startEvent id="S1"/>
+            <bpmn:exclusiveGateway id="G1"/>
+            <bpmn:task id="T1"/>
+            <bpmn:task id="T2"/>
+            <bpmn:exclusiveGateway id="G2"/>
+            <bpmn:endEvent id="E1"/>
+            <bpmn:sequenceFlow id="F1" sourceRef="S1" targetRef="G1"/>
+            <bpmn:sequenceFlow id="F2" name="A" sourceRef="G1" targetRef="T1"/>
+            <bpmn:sequenceFlow id="F3" name="B" sourceRef="G1" targetRef="T2"/>
+            <bpmn:sequenceFlow id="F4" sourceRef="T1" targetRef="G2"/>
+            <bpmn:sequenceFlow id="F5" sourceRef="T2" targetRef="G2"/>
+            <bpmn:sequenceFlow id="F6" sourceRef="G2" targetRef="E1"/>
+          </bpmn:process>
+        </bpmn:definitions>"""
+
+        result = ensure_incoming_outgoing(xml)
+        root = ET.fromstring(result)
+        process = root.find(f".//{{{BPMN_NS}}}process")
+        g2 = process.find(f"{{{BPMN_NS}}}exclusiveGateway[@id='G2']")
+        g2_in = [e.text for e in g2.findall(f"{{{BPMN_NS}}}incoming")]
+        g2_out = [e.text for e in g2.findall(f"{{{BPMN_NS}}}outgoing")]
+        assert sorted(g2_in) == ["F4", "F5"]
+        assert g2_out == ["F6"]
+
     def test_invalid_xml_returns_unchanged(self):
         """Invalid XML should be returned as-is."""
         bad_xml = "<not valid xml"

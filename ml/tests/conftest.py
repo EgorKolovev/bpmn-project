@@ -168,6 +168,139 @@ def all_names_are_latin(xml_string: str, max_cyr_ratio: float = 0.1) -> tuple[bo
 
 
 # ---------------------------------------------------------------------------
+# Structural helpers for complex-process tests (Task 2)
+# ---------------------------------------------------------------------------
+
+
+def _parse_process(xml_string: str):
+    try:
+        root = ET.fromstring(xml_string)
+    except ET.ParseError:
+        return None
+    process = root.find(f".//{{{BPMN_NS}}}process")
+    if process is None:
+        process = root.find(".//process")
+    return process
+
+
+def count_elements_by_tag(xml_string: str, tag_name: str) -> int:
+    process = _parse_process(xml_string)
+    if process is None:
+        return 0
+    return sum(
+        1
+        for elem in list(process)
+        if (elem.tag.split("}", 1)[-1] if "}" in elem.tag else elem.tag) == tag_name
+    )
+
+
+def count_exclusive_gateways(xml_string: str) -> int:
+    return count_elements_by_tag(xml_string, "exclusiveGateway")
+
+
+def count_parallel_gateways(xml_string: str) -> int:
+    return count_elements_by_tag(xml_string, "parallelGateway")
+
+
+def extract_sequence_flows(xml_string: str) -> list[dict]:
+    """Return [{id, sourceRef, targetRef, name, has_condition_expr}] for every
+    sequenceFlow in the process."""
+    process = _parse_process(xml_string)
+    if process is None:
+        return []
+    out = []
+    for elem in list(process):
+        tag = elem.tag.split("}", 1)[-1] if "}" in elem.tag else elem.tag
+        if tag != "sequenceFlow":
+            continue
+        has_cond = False
+        for child in list(elem):
+            ctag = child.tag.split("}", 1)[-1] if "}" in child.tag else child.tag
+            if ctag == "conditionExpression" and (child.text or "").strip():
+                has_cond = True
+                break
+        out.append(
+            {
+                "id": elem.get("id", ""),
+                "sourceRef": elem.get("sourceRef", ""),
+                "targetRef": elem.get("targetRef", ""),
+                "name": elem.get("name", "") or "",
+                "has_condition_expr": has_cond,
+            }
+        )
+    return out
+
+
+def exclusive_gateway_ids(xml_string: str) -> set[str]:
+    process = _parse_process(xml_string)
+    if process is None:
+        return set()
+    ids: set[str] = set()
+    for elem in list(process):
+        tag = elem.tag.split("}", 1)[-1] if "}" in elem.tag else elem.tag
+        if tag == "exclusiveGateway":
+            if eid := elem.get("id"):
+                ids.add(eid)
+    return ids
+
+
+def has_labeled_branch_from_gateway(xml_string: str) -> bool:
+    """True iff at least one exclusiveGateway has a named or conditionalised
+    outgoing sequenceFlow."""
+    gw_ids = exclusive_gateway_ids(xml_string)
+    if not gw_ids:
+        return False
+    for flow in extract_sequence_flows(xml_string):
+        if flow["sourceRef"] in gw_ids and (flow["name"] or flow["has_condition_expr"]):
+            return True
+    return False
+
+
+def has_cycle(xml_string: str) -> bool:
+    """Detect whether the process graph contains any cycle (back-edge).
+
+    Uses iterative DFS with three-coloring. flow-nodes are vertices,
+    sequenceFlows are edges from sourceRef → targetRef.
+    """
+    flows = extract_sequence_flows(xml_string)
+    if not flows:
+        return False
+    adj: dict[str, list[str]] = {}
+    nodes: set[str] = set()
+    for f in flows:
+        s, t = f["sourceRef"], f["targetRef"]
+        if not s or not t:
+            continue
+        adj.setdefault(s, []).append(t)
+        nodes.add(s)
+        nodes.add(t)
+
+    WHITE, GRAY, BLACK = 0, 1, 2
+    color = {n: WHITE for n in nodes}
+
+    for start in nodes:
+        if color[start] != WHITE:
+            continue
+        stack: list[tuple[str, int]] = [(start, 0)]
+        color[start] = GRAY
+        while stack:
+            node, idx = stack[-1]
+            children = adj.get(node, [])
+            if idx < len(children):
+                stack[-1] = (node, idx + 1)
+                nxt = children[idx]
+                if color.get(nxt, WHITE) == GRAY:
+                    return True  # back-edge → cycle
+                if color.get(nxt, WHITE) == WHITE:
+                    color[nxt] = GRAY
+                    stack.append((nxt, 0))
+            else:
+                color[node] = BLACK
+                stack.pop()
+    return False
+
+
+# ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 

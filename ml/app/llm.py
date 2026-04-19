@@ -7,7 +7,7 @@ from typing import Any, Dict
 from app.budget import BudgetTracker, DailyBudgetExceededError, format_usd_from_nanodollars
 from app.config import MAX_OUTPUT_TOKENS
 from app.prompts import SYSTEM_PROMPT_CLASSIFY, SYSTEM_PROMPT_GENERATE, SYSTEM_PROMPT_EDIT
-from app.validator import validate_bpmn_xml
+from app.validator import validate_bpmn_xml, get_bpmn_warnings
 from app.bpmn_fix import ensure_incoming_outgoing, strip_bpmn_diagram
 
 logger = logging.getLogger(__name__)
@@ -53,9 +53,16 @@ class GeminiBackend:
 
     async def count_tokens(self, system_prompt: str, user_prompt: str) -> int:
         payload = self._build_payload(system_prompt, user_prompt)
+        # countTokens requires `model` inside the nested generate_content_request
+        count_request = {
+            "generateContentRequest": {
+                "model": f"models/{self.model}",
+                **payload,
+            }
+        }
         response = await self.http_client.post(
             f"{GEMINI_API_URL}/{self.model}:countTokens",
-            json={"generateContentRequest": payload},
+            json=count_request,
         )
         response.raise_for_status()
         data = response.json()
@@ -154,6 +161,12 @@ class PolzaBackend:
             return LLMClientError("API rejected the request.")
         if status_code in (401, 403):
             return LLMClientError("API authentication failed.")
+        if status_code == 402:
+            return LLMClientError(
+                "Polza API credits exhausted. Top up your balance at "
+                "https://polza.ai/dashboard or switch LLM_BACKEND to 'gemini'.",
+                status_code=402,
+            )
         if status_code == 429:
             return LLMClientError("API rate limit reached. Try again shortly.", status_code=503)
         return LLMClientError("API request failed.")
@@ -255,6 +268,8 @@ class LLMClient:
             error = validate_bpmn_xml(bpmn_xml)
             if error is None:
                 bpmn_xml = ensure_incoming_outgoing(bpmn_xml)
+                for w in get_bpmn_warnings(bpmn_xml):
+                    logger.warning("BPMN warning (generate): %s", w)
                 return {"bpmn_xml": bpmn_xml, "session_name": result["session_name"]}
 
             logger.warning(f"Attempt {attempt + 1}: Invalid BPMN XML: {error}")
@@ -287,6 +302,8 @@ class LLMClient:
             error = validate_bpmn_xml(new_xml)
             if error is None:
                 new_xml = ensure_incoming_outgoing(new_xml)
+                for w in get_bpmn_warnings(new_xml):
+                    logger.warning("BPMN warning (edit): %s", w)
                 return {"bpmn_xml": new_xml}
 
             logger.warning(f"Attempt {attempt + 1}: Invalid edited BPMN XML: {error}")

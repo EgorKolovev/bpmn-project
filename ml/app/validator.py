@@ -26,16 +26,40 @@ NON_FLOW_NODE_TAGS = {
 }
 
 
+def _local(tag: str) -> str:
+    return tag.split("}", 1)[-1] if "}" in tag else tag
+
+
+def _flow_has_label(flow_elem) -> bool:
+    """A sequenceFlow is "labeled" when it has a non-empty `name` attribute
+    OR contains a non-empty <bpmn:conditionExpression> child."""
+    name = flow_elem.get("name")
+    if name and name.strip():
+        return True
+    for child in list(flow_elem):
+        if _local(child.tag) == "conditionExpression" and (child.text or "").strip():
+            return True
+    return False
+
+
 def validate_bpmn_xml(xml_string: str) -> Optional[str]:
-    """Validate BPMN 2.0 XML. Returns None if valid, error message if invalid."""
+    """Validate BPMN 2.0 XML. Returns None if valid, error message if invalid.
+
+    Hard-failure checks:
+      * Well-formed XML with <definitions> root and a <process>
+      * Exactly one startEvent, at least one endEvent
+      * All sequenceFlow sourceRef/targetRef point to real flow nodes
+      * Any exclusiveGateway with 2+ outgoing flows has AT LEAST ONE
+        outgoing flow labeled via `name` or <conditionExpression>.
+        (Required so downstream tools / users can tell branches apart.)
+    """
     try:
         root = ET.fromstring(xml_string)
     except ET.ParseError as e:
         return f"XML parse error: {e}"
 
-    local_tag = root.tag.split("}")[-1] if "}" in root.tag else root.tag
-    if local_tag != "definitions":
-        return f"Root element must be 'definitions', got '{local_tag}'"
+    if _local(root.tag) != "definitions":
+        return f"Root element must be 'definitions', got '{_local(root.tag)}'"
 
     process = root.find(f".//{{{BPMN_NS}}}process")
     if process is None:
@@ -44,13 +68,15 @@ def validate_bpmn_xml(xml_string: str) -> Optional[str]:
         return "No <process> element found"
 
     all_elements = list(process)
-    flow_node_ids = set()
-    sequence_flows = []
+    flow_node_ids: set[str] = set()
+    sequence_flows: list[tuple[str, str, str | None]] = []  # (source, target, flow_id)
+    sequence_flow_by_id: dict[str, object] = {}
+    exclusive_gateway_ids: set[str] = set()
     has_start = False
     has_end = False
 
     for elem in all_elements:
-        tag = elem.tag.split("}")[-1] if "}" in elem.tag else elem.tag
+        tag = _local(elem.tag)
         elem_id = elem.get("id")
 
         if tag == "startEvent":
@@ -66,27 +92,105 @@ def validate_bpmn_xml(xml_string: str) -> Optional[str]:
             target = elem.get("targetRef")
             if not source or not target:
                 return f"sequenceFlow '{elem_id}' missing sourceRef or targetRef"
-            sequence_flows.append((source, target))
+            sequence_flows.append((source, target, elem_id))
+            if elem_id:
+                sequence_flow_by_id[elem_id] = elem
         elif tag not in NON_FLOW_NODE_TAGS:
-            # Treat any other element with an id as a potential flow node.
-            # This covers task, userTask, serviceTask, scriptTask, sendTask,
-            # receiveTask, manualTask, businessRuleTask, callActivity,
-            # subProcess, transaction, adHocSubProcess, exclusiveGateway,
-            # parallelGateway, inclusiveGateway, complexGateway,
-            # eventBasedGateway, intermediateCatchEvent,
-            # intermediateThrowEvent, and any other BPMN 2.0 element.
+            # Generic flow node (task, gateway, event, subProcess…)
             if elem_id:
                 flow_node_ids.add(elem_id)
+            if tag == "exclusiveGateway" and elem_id:
+                exclusive_gateway_ids.add(elem_id)
 
     if not has_start:
         return "No startEvent found in process"
     if not has_end:
         return "No endEvent found in process"
 
-    for source, target in sequence_flows:
+    for source, target, flow_id in sequence_flows:
         if source not in flow_node_ids:
             return f"sequenceFlow references unknown sourceRef '{source}'"
         if target not in flow_node_ids:
             return f"sequenceFlow references unknown targetRef '{target}'"
 
+    # Rule: every diverging exclusiveGateway (2+ outgoing flows) must have at
+    # least ONE outgoing flow labeled with `name` or <conditionExpression>.
+    outgoing_by_gateway: dict[str, list[object]] = {
+        gw_id: [] for gw_id in exclusive_gateway_ids
+    }
+    for source, _target, flow_id in sequence_flows:
+        if source in exclusive_gateway_ids and flow_id:
+            flow_elem = sequence_flow_by_id.get(flow_id)
+            if flow_elem is not None:
+                outgoing_by_gateway[source].append(flow_elem)
+
+    for gw_id, flows in outgoing_by_gateway.items():
+        if len(flows) < 2:
+            continue  # converging or pass-through gateway — nothing to label
+        if not any(_flow_has_label(f) for f in flows):
+            return (
+                f"exclusiveGateway '{gw_id}' has {len(flows)} outgoing flows "
+                f"but none carry a `name` or <conditionExpression>. "
+                f"Add a meaningful label to at least one branch."
+            )
+
     return None
+
+
+def get_bpmn_warnings(xml_string: str) -> list[str]:
+    """Return soft, non-fatal warnings about the BPMN XML.
+
+    Currently:
+      * exclusiveGateway with 2+ outgoing flows where SOME (but not all) are
+        unlabeled — warn about the unlabeled ones, since downstream readers
+        won't know which branch is which.
+
+    Returns [] if nothing to flag. Never raises — best-effort parse.
+    """
+    warnings: list[str] = []
+    try:
+        root = ET.fromstring(xml_string)
+    except ET.ParseError:
+        return warnings
+
+    process = root.find(f".//{{{BPMN_NS}}}process")
+    if process is None:
+        process = root.find(".//process")
+    if process is None:
+        return warnings
+
+    exclusive_gateway_ids: set[str] = set()
+    sequence_flow_by_id: dict[str, object] = {}
+    flows_per_gateway: dict[str, list[str]] = {}
+
+    for elem in list(process):
+        tag = _local(elem.tag)
+        if tag == "exclusiveGateway":
+            if eid := elem.get("id"):
+                exclusive_gateway_ids.add(eid)
+        elif tag == "sequenceFlow":
+            fid = elem.get("id", "")
+            src = elem.get("sourceRef", "")
+            if fid:
+                sequence_flow_by_id[fid] = elem
+            if src and fid:
+                flows_per_gateway.setdefault(src, []).append(fid)
+
+    for gw_id in exclusive_gateway_ids:
+        flow_ids = flows_per_gateway.get(gw_id, [])
+        if len(flow_ids) < 2:
+            continue
+        unlabeled = [
+            fid
+            for fid in flow_ids
+            if not _flow_has_label(sequence_flow_by_id[fid])
+        ]
+        # All labeled → perfect. None labeled → already hard-failed above.
+        # Some labeled → warn about the unlabeled branch(es).
+        if 0 < len(unlabeled) < len(flow_ids):
+            warnings.append(
+                f"exclusiveGateway '{gw_id}': {len(unlabeled)}/{len(flow_ids)} "
+                f"outgoing flows are unlabeled ({', '.join(unlabeled)})."
+            )
+
+    return warnings
