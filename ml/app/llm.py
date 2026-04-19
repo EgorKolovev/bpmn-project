@@ -48,6 +48,9 @@ class GeminiBackend:
                 "temperature": 0.2,
                 "maxOutputTokens": self.max_output_tokens,
                 "responseMimeType": "application/json",
+                # Disable Gemini 2.5 "thinking" tokens — they consume the
+                # output budget and silently truncate long BPMN XML.
+                "thinkingConfig": {"thinkingBudget": 0},
             },
         }
 
