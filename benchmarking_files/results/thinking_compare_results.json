@@ -1,0 +1,560 @@
+{
+  "2048": {
+    "sluzhebnaya_komandirovka": [
+      {
+        "elapsed": 10.301694631576538,
+        "usage": {
+          "promptTokenCount": 5848,
+          "candidatesTokenCount": 2993,
+          "totalTokenCount": 9841,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 5848
+            }
+          ],
+          "thoughtsTokenCount": 1000
+        },
+        "session_name": "Оформление служебной командировки сотрудника",
+        "metrics": {
+          "counts": {
+            "task": 15,
+            "exclusiveGateway": 5,
+            "parallelGateway": 0,
+            "startEvent": 1,
+            "endEvent": 1,
+            "sequenceFlow": 23
+          },
+          "lanes": [
+            "Сотрудник",
+            "Руководитель ЦФО",
+            "СЕО ЦФО",
+            "Бухгалтерия",
+            "Руководитель"
+          ],
+          "named_flows": 10,
+          "cond_flows": 10,
+          "bytes": 7975
+        }
+      },
+      {
+        "elapsed": 11.068413257598877,
+        "usage": {
+          "promptTokenCount": 5848,
+          "candidatesTokenCount": 3169,
+          "totalTokenCount": 10221,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 5848
+            }
+          ],
+          "thoughtsTokenCount": 1204
+        },
+        "session_name": "Оформление служебной командировки сотрудника",
+        "metrics": {
+          "counts": {
+            "task": 14,
+            "exclusiveGateway": 6,
+            "parallelGateway": 0,
+            "startEvent": 1,
+            "endEvent": 1,
+            "sequenceFlow": 26
+          },
+          "lanes": [
+            "Сотрудник",
+            "Руководитель ЦФО",
+            "СЕО ЦФО",
+            "Бухгалтерия"
+          ],
+          "named_flows": 12,
+          "cond_flows": 12,
+          "bytes": 8579
+        }
+      },
+      {
+        "elapsed": 11.703500509262085,
+        "finishReason": "STOP",
+        "usage": {
+          "promptTokenCount": 5848,
+          "candidatesTokenCount": 2902,
+          "totalTokenCount": 10030,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 5848
+            }
+          ],
+          "thoughtsTokenCount": 1280
+        },
+        "parse_failed": true
+      }
+    ],
+    "otpravka_dokumentov": [
+      {
+        "elapsed": 8.656153202056885,
+        "finishReason": "STOP",
+        "usage": {
+          "promptTokenCount": 5783,
+          "candidatesTokenCount": 2209,
+          "totalTokenCount": 8906,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 5783
+            }
+          ],
+          "thoughtsTokenCount": 914
+        },
+        "parse_failed": true
+      },
+      {
+        "elapsed": 8.752654552459717,
+        "usage": {
+          "promptTokenCount": 5783,
+          "candidatesTokenCount": 2283,
+          "totalTokenCount": 9009,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 5783
+            }
+          ],
+          "thoughtsTokenCount": 943
+        },
+        "session_name": "Процесс отправки исходящих документов",
+        "metrics": {
+          "counts": {
+            "task": 9,
+            "exclusiveGateway": 4,
+            "parallelGateway": 0,
+            "startEvent": 1,
+            "endEvent": 2,
+            "sequenceFlow": 18
+          },
+          "lanes": [
+            "Менеджер",
+            "Офис-менеджер/Специалист",
+            "Юристы"
+          ],
+          "named_flows": 8,
+          "cond_flows": 8,
+          "bytes": 6903
+        }
+      },
+      {
+        "elapsed": 7.839824676513672,
+        "usage": {
+          "promptTokenCount": 5783,
+          "candidatesTokenCount": 2243,
+          "totalTokenCount": 8752,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 5783
+            }
+          ],
+          "thoughtsTokenCount": 726
+        },
+        "session_name": "Процесс отправки исходящих документов",
+        "metrics": {
+          "counts": {
+            "task": 9,
+            "exclusiveGateway": 4,
+            "parallelGateway": 0,
+            "startEvent": 1,
+            "endEvent": 1,
+            "sequenceFlow": 18
+          },
+          "lanes": [
+            "Менеджер",
+            "Специалист",
+            "Юрист"
+          ],
+          "named_flows": 8,
+          "cond_flows": 8,
+          "bytes": 6859
+        }
+      }
+    ]
+  },
+  "4000": {
+    "sluzhebnaya_komandirovka": [
+      {
+        "elapsed": 10.577508926391602,
+        "usage": {
+          "promptTokenCount": 5848,
+          "candidatesTokenCount": 3131,
+          "totalTokenCount": 10176,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 5848
+            }
+          ],
+          "thoughtsTokenCount": 1197
+        },
+        "session_name": "Оформление служебной командировки сотрудника",
+        "metrics": {
+          "counts": {
+            "task": 14,
+            "exclusiveGateway": 6,
+            "parallelGateway": 0,
+            "startEvent": 1,
+            "endEvent": 1,
+            "sequenceFlow": 24
+          },
+          "lanes": [
+            "Сотрудник",
+            "Руководитель ЦФО",
+            "СЕО ЦФО",
+            "Бухгалтерия",
+            "Руководитель"
+          ],
+          "named_flows": 12,
+          "cond_flows": 12,
+          "bytes": 8327
+        }
+      },
+      {
+        "elapsed": 11.180194854736328,
+        "usage": {
+          "promptTokenCount": 5848,
+          "candidatesTokenCount": 3312,
+          "totalTokenCount": 10422,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 5848
+            }
+          ],
+          "thoughtsTokenCount": 1262
+        },
+        "session_name": "Оформление служебной командировки сотрудника",
+        "metrics": {
+          "counts": {
+            "task": 15,
+            "exclusiveGateway": 6,
+            "parallelGateway": 0,
+            "startEvent": 1,
+            "endEvent": 1,
+            "sequenceFlow": 27
+          },
+          "lanes": [
+            "Сотрудник",
+            "Руководитель ЦФО",
+            "СЕО ЦФО",
+            "Бухгалтерия",
+            "Руководитель"
+          ],
+          "named_flows": 12,
+          "cond_flows": 12,
+          "bytes": 8882
+        }
+      },
+      {
+        "elapsed": 9.595136880874634,
+        "usage": {
+          "promptTokenCount": 5848,
+          "candidatesTokenCount": 3050,
+          "totalTokenCount": 9719,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 5848
+            }
+          ],
+          "thoughtsTokenCount": 821
+        },
+        "session_name": "Оформление служебной командировки сотрудника",
+        "metrics": {
+          "counts": {
+            "task": 14,
+            "exclusiveGateway": 5,
+            "parallelGateway": 0,
+            "startEvent": 1,
+            "endEvent": 1,
+            "sequenceFlow": 25
+          },
+          "lanes": [
+            "Сотрудник",
+            "Руководитель ЦФО",
+            "СЕО ЦФО",
+            "Бухгалтерия"
+          ],
+          "named_flows": 10,
+          "cond_flows": 10,
+          "bytes": 8955
+        }
+      }
+    ],
+    "otpravka_dokumentov": [
+      {
+        "elapsed": 8.353360652923584,
+        "usage": {
+          "promptTokenCount": 5783,
+          "candidatesTokenCount": 2103,
+          "totalTokenCount": 8706,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 5783
+            }
+          ],
+          "thoughtsTokenCount": 820
+        },
+        "session_name": "Процесс отправки исходящих документов",
+        "metrics": {
+          "counts": {
+            "task": 9,
+            "exclusiveGateway": 3,
+            "parallelGateway": 0,
+            "startEvent": 1,
+            "endEvent": 2,
+            "sequenceFlow": 17
+          },
+          "lanes": [
+            "Менеджер",
+            "Офис-менеджер/Специалист",
+            "Юристы"
+          ],
+          "named_flows": 7,
+          "cond_flows": 7,
+          "bytes": 6306
+        }
+      },
+      {
+        "elapsed": 7.43061089515686,
+        "finishReason": "STOP",
+        "usage": {
+          "promptTokenCount": 5783,
+          "candidatesTokenCount": 2162,
+          "totalTokenCount": 8721,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 5783
+            }
+          ],
+          "thoughtsTokenCount": 776
+        },
+        "parse_failed": true
+      },
+      {
+        "elapsed": 8.939680576324463,
+        "finishReason": "STOP",
+        "usage": {
+          "promptTokenCount": 5783,
+          "candidatesTokenCount": 2060,
+          "totalTokenCount": 9056,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 5783
+            }
+          ],
+          "thoughtsTokenCount": 1213
+        },
+        "parse_failed": true
+      }
+    ]
+  },
+  "8000": {
+    "sluzhebnaya_komandirovka": [
+      {
+        "elapsed": 16.32441782951355,
+        "usage": {
+          "promptTokenCount": 5848,
+          "candidatesTokenCount": 3474,
+          "totalTokenCount": 12374,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 5848
+            }
+          ],
+          "thoughtsTokenCount": 3052
+        },
+        "session_name": "Оформление служебной командировки сотрудника",
+        "metrics": {
+          "counts": {
+            "task": 15,
+            "exclusiveGateway": 6,
+            "parallelGateway": 0,
+            "startEvent": 1,
+            "endEvent": 1,
+            "sequenceFlow": 28
+          },
+          "lanes": [
+            "Сотрудник",
+            "Руководитель ЦФО",
+            "СЕО ЦФО",
+            "Бухгалтерия",
+            "Руководитель"
+          ],
+          "named_flows": 12,
+          "cond_flows": 12,
+          "bytes": 9851
+        }
+      },
+      {
+        "elapsed": 22.3168842792511,
+        "usage": {
+          "promptTokenCount": 5848,
+          "candidatesTokenCount": 3437,
+          "totalTokenCount": 14495,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 5848
+            }
+          ],
+          "thoughtsTokenCount": 5210
+        },
+        "session_name": "Оформление служебной командировки сотрудника",
+        "metrics": {
+          "counts": {
+            "task": 15,
+            "exclusiveGateway": 6,
+            "parallelGateway": 0,
+            "startEvent": 1,
+            "endEvent": 1,
+            "sequenceFlow": 27
+          },
+          "lanes": [
+            "Сотрудник",
+            "Руководитель ЦФО",
+            "СЕО ЦФО",
+            "Бухгалтерия",
+            "Руководитель"
+          ],
+          "named_flows": 12,
+          "cond_flows": 12,
+          "bytes": 9692
+        }
+      },
+      {
+        "elapsed": 17.78108525276184,
+        "usage": {
+          "promptTokenCount": 5848,
+          "candidatesTokenCount": 3434,
+          "totalTokenCount": 12571,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 5848
+            }
+          ],
+          "thoughtsTokenCount": 3289
+        },
+        "session_name": "Оформление служебной командировки сотрудника",
+        "metrics": {
+          "counts": {
+            "task": 15,
+            "exclusiveGateway": 6,
+            "parallelGateway": 0,
+            "startEvent": 1,
+            "endEvent": 1,
+            "sequenceFlow": 28
+          },
+          "lanes": [
+            "Сотрудник",
+            "Руководитель ЦФО",
+            "СЕО ЦФО",
+            "Бухгалтерия"
+          ],
+          "named_flows": 12,
+          "cond_flows": 12,
+          "bytes": 9641
+        }
+      }
+    ],
+    "otpravka_dokumentov": [
+      {
+        "elapsed": 12.946329355239868,
+        "usage": {
+          "promptTokenCount": 5783,
+          "candidatesTokenCount": 2309,
+          "totalTokenCount": 10737,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 5783
+            }
+          ],
+          "thoughtsTokenCount": 2645
+        },
+        "session_name": "Процесс отправки исходящих документов",
+        "metrics": {
+          "counts": {
+            "task": 10,
+            "exclusiveGateway": 4,
+            "parallelGateway": 0,
+            "startEvent": 1,
+            "endEvent": 1,
+            "sequenceFlow": 19
+          },
+          "lanes": [
+            "Менеджер",
+            "Специалист по документообороту",
+            "Юристы"
+          ],
+          "named_flows": 8,
+          "cond_flows": 8,
+          "bytes": 6695
+        }
+      },
+      {
+        "elapsed": 13.398796081542969,
+        "usage": {
+          "promptTokenCount": 5783,
+          "candidatesTokenCount": 2041,
+          "totalTokenCount": 10711,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 5783
+            }
+          ],
+          "thoughtsTokenCount": 2887
+        },
+        "session_name": "Процесс отправки исходящих документов",
+        "metrics": {
+          "counts": {
+            "task": 9,
+            "exclusiveGateway": 3,
+            "parallelGateway": 0,
+            "startEvent": 1,
+            "endEvent": 1,
+            "sequenceFlow": 17
+          },
+          "lanes": [
+            "Менеджер",
+            "Специалист по документообороту",
+            "Юристы"
+          ],
+          "named_flows": 7,
+          "cond_flows": 7,
+          "bytes": 5549
+        }
+      },
+      {
+        "elapsed": 11.361908912658691,
+        "finishReason": "STOP",
+        "usage": {
+          "promptTokenCount": 5783,
+          "candidatesTokenCount": 2051,
+          "totalTokenCount": 10117,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 5783
+            }
+          ],
+          "thoughtsTokenCount": 2283
+        },
+        "parse_failed": true
+      }
+    ]
+  }
+}

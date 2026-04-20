@@ -99,6 +99,55 @@ GEMINI_MODEL=gemini-2.5-flash
 POLZA_MODEL=google/gemini-2.5-flash  # when LLM_BACKEND=polza
 ```
 
+## Is 2048 the right thinking budget?
+
+Ran `thinking_budget_compare.py` — 3 trials × 2 benchmarks × 3 budgets
+(2048 / 4000 / 8000), direct Gemini calls bypassing our /generate (to
+isolate the effect of the budget). **Key observation: the model doesn't
+actually *use* higher budgets — it hallucinates more thinking without
+producing better structure.**
+
+### Actual thinking tokens consumed (the signal)
+
+| Budget | Benchmark 1 (tokens used) | Benchmark 2 (tokens used) |
+|---|---|---|
+| 2048 | 1000–1204 (avg 1102) | 726–943 (avg 835) |
+| 4000 | 821–1262 (avg 1093) | 820 (1 trial ok) |
+| **8000** | **3052–5210 (avg 3850)** | **2645–2887 (avg 2766)** |
+
+At 2048 the model uses ~1100 tokens on a 4800-word spec — it's **not
+hitting the cap**. Raising to 4000 produces the same consumption (~1100).
+Only at 8000 does the model actually burn more tokens (3850), but it's
+"wasted thinking" — structural metrics don't change.
+
+### Quality ceiling is hit at 2048
+
+| Metric | 2048 | 4000 | 8000 |
+|---|---|---|---|
+| Bench 1 lanes | 4–5 | 4–5 | 4–5 |
+| Bench 1 gateways | 5–6 | 5–6 | 6 |
+| Bench 1 tasks | 14–15 | 14–15 | 15 |
+| Bench 2 lanes | 3 | 3 | 3 |
+| Bench 2 gateways | 4 | 3 | 3–4 |
+| Bench 2 tasks | 9 | 9 | 9–10 |
+| Bench 1 latency (s) | 10.3–11.1 | 9.6–11.2 | **16.3–22.3** |
+
+At 8000 latency nearly doubles (11s → 19s) and cost scales linearly
+with thinking tokens — for **zero** quality gain on our benchmarks.
+
+### Note on the occasional extra lane "Руководитель"
+
+On Benchmark 1, one extra lane ("Руководитель" — the manager who
+re-approves when budget exceeds limits) appears in some runs and not
+others. **Higher thinking budget does NOT stabilise this** — it's
+equally flaky at 2048 and 8000. If we want it consistent, the fix is
+promptb (more explicit role enumeration), not more thinking.
+
+### Decision
+
+**Keep default `GEMINI_THINKING_BUDGET=2048`.** Higher values burn
+latency and $ for no measurable quality improvement on these specs.
+
 ## Known limitations
 
 1. ~~**Role coverage on long specs**~~ — RESOLVED with `thinkingBudget=2048`.
