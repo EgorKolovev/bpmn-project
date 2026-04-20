@@ -2,10 +2,10 @@ import json
 import re
 import logging
 import httpx
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from app.budget import BudgetTracker, DailyBudgetExceededError, format_usd_from_nanodollars
-from app.config import MAX_OUTPUT_TOKENS
+from app.config import GEMINI_THINKING_BUDGET, MAX_OUTPUT_TOKENS
 from app.prompts import SYSTEM_PROMPT_CLASSIFY, SYSTEM_PROMPT_GENERATE, SYSTEM_PROMPT_EDIT
 from app.validator import validate_bpmn_xml, get_bpmn_warnings
 from app.bpmn_fix import (
@@ -33,8 +33,10 @@ class GeminiBackend:
     def __init__(self, api_key: str, model: str, max_output_tokens: int):
         self.model = model
         self.max_output_tokens = max_output_tokens
+        # 180s lets a complex request with thinkingBudget=2048 + long
+        # BPMN output complete without HTTP-level timeouts.
         self.http_client = httpx.AsyncClient(
-            timeout=60.0,
+            timeout=180.0,
             headers={"x-goog-api-key": api_key},
         )
 
@@ -53,9 +55,9 @@ class GeminiBackend:
                 "temperature": 0.2,
                 "maxOutputTokens": self.max_output_tokens,
                 "responseMimeType": "application/json",
-                # Disable Gemini 2.5 "thinking" tokens — they consume the
-                # output budget and silently truncate long BPMN XML.
-                "thinkingConfig": {"thinkingBudget": 0},
+                # Thinking budget — 0 off / -1 dynamic / >0 cap. See
+                # config.GEMINI_THINKING_BUDGET. Ignored by non-thinking models.
+                "thinkingConfig": {"thinkingBudget": GEMINI_THINKING_BUDGET},
             },
         }
 
@@ -92,7 +94,32 @@ class GeminiBackend:
         if "candidates" not in data or not data["candidates"]:
             raise LLMClientError("Gemini API returned no completion.")
 
-        text = data["candidates"][0]["content"]["parts"][0]["text"]
+        candidate = data["candidates"][0]
+        finish_reason = candidate.get("finishReason", "")
+        # MAX_TOKENS — silent truncation; flip to LLMClientError so the
+        # operator learns to bump MAX_OUTPUT_TOKENS or thinking budget.
+        if finish_reason == "MAX_TOKENS":
+            usage = data.get("usageMetadata", {})
+            raise LLMClientError(
+                f"Gemini truncated response at MAX_TOKENS. "
+                f"usage={usage}. Increase GEMINI_MAX_OUTPUT_TOKENS or "
+                f"reduce GEMINI_THINKING_BUDGET."
+            )
+        content = candidate.get("content", {})
+        parts = content.get("parts")
+        if not parts:
+            usage = data.get("usageMetadata", {})
+            raise LLMClientError(
+                f"Gemini returned empty content (finishReason={finish_reason}, "
+                f"usage={usage})."
+            )
+        text = parts[0].get("text", "")
+        if not text:
+            usage = data.get("usageMetadata", {})
+            raise LLMClientError(
+                f"Gemini returned empty text (finishReason={finish_reason}, "
+                f"usage={usage})."
+            )
         usage = data.get("usageMetadata", {})
         prompt_tokens = int(usage.get("promptTokenCount", 0))
         output_tokens = int(usage.get("candidatesTokenCount", 0))
@@ -120,8 +147,10 @@ class PolzaBackend:
     def __init__(self, api_key: str, model: str, base_url: str, max_output_tokens: int):
         self.model = model
         self.max_output_tokens = max_output_tokens
+        # 180s matches GeminiBackend — gives thinking + long XML output
+        # room to complete without HTTP timeout.
         self.http_client = httpx.AsyncClient(
-            timeout=60.0,
+            timeout=180.0,
             base_url=base_url,
             headers={
                 "Authorization": f"Bearer {api_key}",
@@ -235,6 +264,37 @@ class LLMClient:
 
         return text
 
+    def _repair_double_escaped_json(self, text: str) -> str | None:
+        """Gemini flash-lite sometimes emits JSON where the entire payload is
+        double-escaped: every `"` inside the JSON structure becomes `\\"`.
+
+        Example malformed:
+            {"bpmn_xml": "<?xml...\\" version=\\"1.0\\"...</definitions>\\", \\"session_name\\": \\"…\\"}
+
+        The outer structure has `\\",` where it should have `",`. Reverting
+        one level of escaping turns this into valid JSON.
+
+        Returns the repaired text, or None if no repair is possible.
+        """
+        # Heuristic: if the end contains `\"}` (escaped quote before closing
+        # brace) but the JSON couldn't parse, assume double-escaping.
+        if r'\"}' not in text and r'\",' not in text:
+            return None
+        # Decode one level: replace `\"` → `"`, `\\` → `\`, `\n` → real newline.
+        # We do this via json.loads wrapping — safest way.
+        try:
+            # Wrap in quotes and use json.loads to unescape exactly one level.
+            inner = json.loads(f'"{text}"')
+            return inner
+        except json.JSONDecodeError:
+            # Fallback: manual unescape of common patterns.
+            return (
+                text.replace(r'\"', '"')
+                    .replace(r'\\', '\\')
+                    .replace(r'\n', '\n')
+                    .replace(r'\t', '\t')
+            )
+
     def _extract_json(self, text: str) -> dict:
         text = text.strip()
         json_match = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
@@ -242,11 +302,39 @@ class LLMClient:
             text = json_match.group(1)
         try:
             return json.loads(text)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as first_err:
+            # Recovery path 1: Gemini sometimes double-escapes the entire JSON.
+            repaired = self._repair_double_escaped_json(text)
+            if repaired is not None:
+                try:
+                    result = json.loads(repaired)
+                    logger.info("Recovered double-escaped JSON from LLM response.")
+                    return result
+                except json.JSONDecodeError:
+                    pass  # fall through
+            # Recovery path 2: extract outermost {...} via regex (handles
+            # chatty wrappers like "Here's your JSON: {...}").
             json_match = re.search(r"\{.*\}", text, re.DOTALL)
             if json_match:
-                return json.loads(json_match.group(0))
-            raise ValueError(f"Could not parse JSON from LLM response: {text[:500]}")
+                try:
+                    return json.loads(json_match.group(0))
+                except json.JSONDecodeError as second_err:
+                    logger.error(
+                        "JSON parse failed (incl. recovery). len=%d first_err=%s "
+                        "second_err=%s head=%r tail=%r",
+                        len(text), first_err, second_err, text[:200], text[-200:],
+                    )
+                    raise ValueError(
+                        f"Could not parse JSON from LLM response "
+                        f"(len={len(text)}, err={second_err})"
+                    )
+            logger.error(
+                "JSON parse failed, no outer braces. len=%d err=%s head=%r tail=%r",
+                len(text), first_err, text[:200], text[-200:],
+            )
+            raise ValueError(
+                f"Could not parse JSON from LLM response (len={len(text)})"
+            )
 
     def _unescape_xml(self, xml_str: str) -> str:
         if not xml_str.strip().startswith("<"):
@@ -258,18 +346,36 @@ class LLMClient:
 
     async def generate(self, description: str) -> dict:
         logger.info("Calling LLM for BPMN generation")
-        user_prompt = f"Generate a BPMN 2.0 diagram for the following business process:\n\n{description}"
+        original_prompt = (
+            f"Generate a BPMN 2.0 diagram for the following business "
+            f"process:\n\n{description}"
+        )
+        user_prompt = original_prompt
 
         max_retries = 3
-        error = None
+        error: Optional[str] = None
         for attempt in range(max_retries):
             raw = await self._call_llm(SYSTEM_PROMPT_GENERATE, user_prompt)
-            result = self._extract_json(raw)
+            try:
+                result = self._extract_json(raw)
+            except ValueError as exc:
+                # JSON parse failure (incl. double-escape, truncation).
+                # Retry with a cleaner prompt rather than 500-ing immediately.
+                error = f"JSON parse error: {exc}"
+                logger.warning("Attempt %d: %s", attempt + 1, error)
+                user_prompt = original_prompt  # fresh request, no history
+                continue
 
             if "bpmn_xml" not in result:
-                raise ValueError("LLM response missing 'bpmn_xml' field")
+                error = "LLM response missing 'bpmn_xml' field"
+                logger.warning("Attempt %d: %s", attempt + 1, error)
+                user_prompt = original_prompt
+                continue
             if "session_name" not in result:
-                raise ValueError("LLM response missing 'session_name' field")
+                error = "LLM response missing 'session_name' field"
+                logger.warning("Attempt %d: %s", attempt + 1, error)
+                user_prompt = original_prompt
+                continue
 
             bpmn_xml = self._unescape_xml(result["bpmn_xml"])
             bpmn_xml = strip_bpmn_diagram(bpmn_xml)
@@ -282,30 +388,43 @@ class LLMClient:
                     logger.warning("BPMN warning (generate): %s", w)
                 return {"bpmn_xml": bpmn_xml, "session_name": result["session_name"]}
 
-            logger.warning(f"Attempt {attempt + 1}: Invalid BPMN XML: {error}")
+            logger.warning("Attempt %d: Invalid BPMN XML: %s", attempt + 1, error)
             user_prompt = (
-                f"Your previous response produced invalid BPMN XML. Error: {error}\n\n"
-                f"Please fix the issue and regenerate. Original request:\n"
-                f"Generate a BPMN 2.0 diagram for the following business process:\n\n{description}"
+                f"Your previous response produced invalid BPMN XML. "
+                f"Error: {error}\n\nPlease fix the issue and regenerate. "
+                f"Original request:\n{original_prompt}"
             )
 
-        raise ValueError(f"Failed to generate valid BPMN XML after {max_retries} attempts. Last error: {error}")
+        raise ValueError(
+            f"Failed to generate valid BPMN XML after {max_retries} attempts. "
+            f"Last error: {error}"
+        )
 
     async def edit(self, prompt: str, bpmn_xml: str) -> dict:
         logger.info("Calling LLM for BPMN edit")
-        user_prompt = (
+        original_prompt = (
             f"Current BPMN XML:\n```xml\n{bpmn_xml}\n```\n\n"
             f"Modification instruction: {prompt}"
         )
+        user_prompt = original_prompt
 
         max_retries = 3
-        error = None
+        error: Optional[str] = None
         for attempt in range(max_retries):
             raw = await self._call_llm(SYSTEM_PROMPT_EDIT, user_prompt)
-            result = self._extract_json(raw)
+            try:
+                result = self._extract_json(raw)
+            except ValueError as exc:
+                error = f"JSON parse error: {exc}"
+                logger.warning("Attempt %d: %s", attempt + 1, error)
+                user_prompt = original_prompt
+                continue
 
             if "bpmn_xml" not in result:
-                raise ValueError("LLM response missing 'bpmn_xml' field")
+                error = "LLM response missing 'bpmn_xml' field"
+                logger.warning("Attempt %d: %s", attempt + 1, error)
+                user_prompt = original_prompt
+                continue
 
             new_xml = self._unescape_xml(result["bpmn_xml"])
             new_xml = strip_bpmn_diagram(new_xml)

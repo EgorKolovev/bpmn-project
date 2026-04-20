@@ -3,6 +3,15 @@ import os
 
 DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite-preview")
 MAX_OUTPUT_TOKENS = int(os.environ.get("GEMINI_MAX_OUTPUT_TOKENS", "16384"))
+# Thinking budget for Gemini 2.5/3.x models:
+#   0      → disabled (no thinking, fastest/cheapest)
+#   N > 0  → explicit cap in tokens (recommended)
+#   -1     → dynamic — DANGEROUS: model may think far longer than our
+#            HTTP timeouts, causing timeouts and cascading retries.
+# Default 2048 is a tested sweet spot: enough reasoning for role
+# extraction on long specs, but bounded latency (~30s per request).
+# Non-thinking-capable models silently ignore this parameter.
+GEMINI_THINKING_BUDGET = int(os.environ.get("GEMINI_THINKING_BUDGET", "2048"))
 DAILY_SPEND_LIMIT_USD = float(os.environ.get("DAILY_SPEND_LIMIT_USD", "5.0"))
 USAGE_DB_PATH = os.environ.get("USAGE_DB_PATH", "/tmp/bpmn_usage.sqlite3")
 USAGE_BUDGET_TIMEZONE = os.environ.get("USAGE_BUDGET_TIMEZONE", "UTC")

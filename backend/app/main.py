@@ -56,7 +56,9 @@ async def lifespan(app: FastAPI):
 
     ml_http_client = httpx.AsyncClient(
         base_url=ML_SERVICE_URL,
-        timeout=60.0,
+        # 240s — longer than the ML service's own 180s httpx timeout so
+        # we never cut off a legitimate LLM call from the outside.
+        timeout=240.0,
         headers=headers,
     )
     session_signing_secret = load_or_create_session_secret(

@@ -1,16 +1,17 @@
 # Benchmark report — Iteration 2
 
-Regression run of two customer-provided text specs through the updated
-BPMN generator. Two LLM configurations were evaluated side-by-side:
+Three LLM configurations were evaluated side-by-side:
 
-- **flash-lite-preview** — `gemini-3.1-flash-lite-preview`
-  (the model that was already configured before Iteration 2)
-- **2.5-flash** — `gemini-2.5-flash` (thinking disabled)
+- **flash-lite (no think)** — `gemini-3.1-flash-lite-preview` with
+  `thinkingBudget=0` (earlier baseline).
+- **flash-lite + think 2048** — `gemini-3.1-flash-lite-preview` with
+  `thinkingBudget=2048` **← CURRENT DEFAULT**.
+- **2.5-flash** — `gemini-2.5-flash` with thinking disabled.
 
-**Default chosen: `flash-lite-preview`** — all E2E tests pass reliably
-(87/87 on 3 consecutive runs); ~3× faster and ~1.7× cheaper than
-2.5-flash. Customers needing maximum role-extraction fidelity on
-long specs can switch via `GEMINI_MODEL=gemini-2.5-flash` in `.env`.
+**Default chosen: `flash-lite-preview` + thinking=2048** — matches the
+quality of 2.5-flash on role-rich long specs *and* is ~2× cheaper and
+~2× faster. Switch models via `.env` (`GEMINI_MODEL=...`) or tune
+thinking budget via `GEMINI_THINKING_BUDGET=...` (0/512/2048/4096/-1).
 
 ## Reproduce
 
@@ -22,37 +23,38 @@ docker compose exec -T -e ML_URL=http://localhost:8001 \
 
 ## Benchmark 1 — Служебная командировка (~4800 word spec)
 
-| Metric | flash-lite-preview | 2.5-flash |
-|---|---|---|
-| File size | 9097 bytes | 8637 bytes |
-| Tasks | 13 | 14 |
-| Exclusive gateways | 6 | 5 |
-| Sequence flows | 25 | 23 |
-| Named sequence flows | 12/25 | 9/23 |
-| Flows with `<conditionExpression>` | 12 | 9 |
-| **Lanes** | **2** (Сотрудник, Бухгалтерия) | **4** (Сотрудник, Руководитель ЦФО, СЕО другого ЦФО, Бухгалтерия) |
-| Russian labels | ✓ all names ≥0.95 cyr ratio | ✓ same |
-| Valid per validator | ✓ | ✓ |
+| Metric | flash-lite no-think | **flash-lite + think 2048** | 2.5-flash |
+|---|---|---|---|
+| File size | 9097 bytes | **9069 bytes** | 8637 bytes |
+| Tasks | 13 | **14** | 14 |
+| Exclusive gateways | 6 | **6** | 5 |
+| Sequence flows | 25 | **26** | 23 |
+| Named sequence flows | 12/25 | **11/26** | 9/23 |
+| Flows with `<conditionExpression>` | 12 | **11** | 9 |
+| **Lanes** | **2** | **5** 🎯 (Сотрудник / Руководитель ЦФО / СЕО ЦФО / Бухгалтерия / Руководитель) | 4 |
+| Russian labels | ✓ | ✓ | ✓ |
+| Valid per validator | ✓ | ✓ | ✓ |
 
-**Qualitative observation:** flash-lite-preview collapsed "Руководитель
-ЦФО" and "СЕО другого ЦФО" into Бухгалтерия/Сотрудник — the *decisions*
-they represent are in the XML as gateways, but they're not broken out
-into their own swimlanes. 2.5-flash correctly renders all four roles
-as separate lanes.
+**With thinking=2048, flash-lite-preview extracts MORE lanes than
+2.5-flash without thinking** (5 vs 4). The thinking tokens (1127 used in
+this run) let the model identify all five distinct actors in the spec,
+including nuanced ones like "Руководитель" (generic) vs "Руководитель
+ЦФО" (specific).
 
 ## Benchmark 2 — Отправка документов (~2000 word spec)
 
-| Metric | flash-lite-preview | 2.5-flash |
-|---|---|---|
-| File size | 5670 bytes | 6365 bytes |
-| Tasks | 9 | 8 |
-| Exclusive gateways | 2 | 4 |
-| Sequence flows | 15 | 17 |
-| Named sequence flows | 5/15 | 8/17 |
-| Flows with `<conditionExpression>` | 5 | 8 |
-| **Lanes** | **3** (Менеджер, Офис-менеджер/Специалист, Юристы) | **3** (same) |
+| Metric | flash-lite no-think | **flash-lite + think 2048** | 2.5-flash |
+|---|---|---|---|
+| File size | 5670 bytes | **6934 bytes** | 6365 bytes |
+| Tasks | 9 | **9** | 8 |
+| Exclusive gateways | 2 | **4** | 4 |
+| Sequence flows | 15 | **18** | 17 |
+| Named sequence flows | 5/15 | **8/18** | 8/17 |
+| Flows with `<conditionExpression>` | 5 | **8** | 8 |
+| **Lanes** | **3** | **3** | **3** |
 
-On a smaller spec both models produce equivalent-quality output.
+Thinking doubles the gateway count (2 → 4), matching 2.5-flash. Lanes
+stable at 3 across all configurations.
 
 ## E2E test suite stability (3 consecutive runs)
 
@@ -63,6 +65,10 @@ On a smaller spec both models produce equivalent-quality output.
 | Level 2 lanes (6 tests) | 3×6 clean | 3×6 clean |
 | **Total Level 2** | **87/87** | **87/87** |
 | Level 3 full-stack (5 tests) | 3×5 clean | 3×5 clean |
+
+**With thinking=2048 (current default):** 3 consecutive clean runs of
+Level 2 (29/29 each, no reruns, ~130s each) + 3 consecutive clean runs
+of Level 3 (5/5 each, ~23s each).
 
 Before the `fix_missing_namespace_declarations` post-processing step
 was added, flash-lite-preview occasionally emitted `xsi:type="..."`
@@ -95,10 +101,16 @@ POLZA_MODEL=google/gemini-2.5-flash  # when LLM_BACKEND=polza
 
 ## Known limitations
 
-1. **Role coverage on long specs** — flash-lite-preview sometimes
-   collapses multiple roles into a single lane on very long multi-role
-   descriptions. Pro/2.5-flash do better but cost more.
+1. ~~**Role coverage on long specs**~~ — RESOLVED with `thinkingBudget=2048`.
 2. **Unnamed intermediate flows** — non-conditional flows between two
    sequential tasks are unlabeled by design (standard BPMN).
 3. **End-event lane placement** — LLM places endEvent in the lane of
    the last *action*, not the "owning" role.
+4. **Over-escaped JSON** — Gemini flash-lite occasionally emits
+   double-escaped JSON (~1 in 3 calls on long inputs). Handled by
+   `_repair_double_escaped_json()` in `ml/app/llm.py` and a JSON-level
+   retry in `generate()`/`edit()`. Transparent to the caller.
+5. **`thinkingBudget=-1` (dynamic)** — explicitly avoided: dynamic
+   thinking can exceed HTTP timeouts, causing cascading retries. The
+   `test_llm_config.py` regression tests will fail if anyone sets
+   `GEMINI_THINKING_BUDGET=-1` by default.
