@@ -100,6 +100,30 @@ at any decision, exception, or alternative path — you MUST materialise it
 as a gateway with named branches. A 3-step description can still contain
 a conditional branch when it makes business sense.
 
+**BUT — NO SPURIOUS GATEWAYS:** a bare action verb like "verify",
+"check", "review", "approve", "проверить", "согласовать" on its own
+does NOT imply a decision gateway. A gateway is required only when
+the description gives AT LEAST ONE of these explicit signals:
+
+  1. Two contrasting outcomes named on the same step
+     ("approved / rejected", "одобрено / отклонено", "либо X либо Y",
+     "согласует заявку либо возвращает на доработку").
+  2. An explicit conditional clause
+     ("if X — …, otherwise — …", "в случае X — …, иначе — …",
+     "если превышение — дополнительное согласование").
+  3. A stated exception or failure path
+     ("возвращает на доработку", "возмещает расходы или удерживает",
+     "при опоздании по вине — … , не по вине — …").
+
+If NONE of these signals is present, model the step as a plain task
+and continue sequentially. A linear sentence like "A submits, B
+verifies, C sets up, D finishes" MUST stay linear: one startEvent →
+four tasks → one endEvent, zero gateways, zero cycles.
+
+Conversely: if the description DOES contain any of the signals above,
+you MUST emit a gateway with named branches — do NOT suppress them.
+A 13 KB role-rich spec often contains 5-10 such signals.
+
 ==========================================================================
 SECTION 3 — Language matching (CRITICAL)
 ==========================================================================

@@ -25,10 +25,27 @@ class TestThinkingBudgetDefault:
 
     def test_default_within_reasonable_range(self):
         """Default budget should be in a sensible range — not too low to be
-        useless, not so high that latency explodes."""
+        useless, not so high that latency explodes or output truncates.
+        Upper bound pushed to 8192 to accommodate gemini-3-flash-preview
+        at 4096 (current default) and leave headroom for operator
+        experimentation up to 8192."""
         assert 512 <= config.GEMINI_THINKING_BUDGET <= 8192, (
             f"GEMINI_THINKING_BUDGET = {config.GEMINI_THINKING_BUDGET} is outside "
             "sane range [512, 8192]. See docs for why."
+        )
+
+
+class TestMaxOutputTokensDefault:
+    def test_default_large_enough_for_long_bpmn(self):
+        """MAX_OUTPUT_TOKENS must cover thinking tokens + BPMN XML.
+        Observed: at thinkingBudget=4096 on 3-flash, thoughts alone can
+        consume ~4–8K tokens, leaving room for a 3–5K-token XML payload.
+        16384 is too tight at this tier — truncates on real 13 KB PDFs.
+        Regression guard: must be >= 24576 so we never regress back."""
+        assert config.MAX_OUTPUT_TOKENS >= 24576, (
+            f"MAX_OUTPUT_TOKENS = {config.MAX_OUTPUT_TOKENS} is too low for "
+            "gemini-3-flash-preview with thinkingBudget=4096. See PDF "
+            "benchmark in REPORT.md — truncates on real customer specs."
         )
 
     def test_env_override_works(self, monkeypatch):
