@@ -115,28 +115,49 @@ SECTION 3 — Language matching (CRITICAL)
   `name` / condition text follow the user's language.
 
 ==========================================================================
-SECTION 4 — Swimlanes (role / actor separation)
+SECTION 4 — Swimlanes (role / actor separation) — **HARD REQUIREMENT**
 ==========================================================================
 If the description explicitly mentions DIFFERENT ROLES, DEPARTMENTS or
 ACTORS that perform different steps (e.g. "Менеджер", "Юрист",
-"Директор", "Бухгалтерия", "Руководитель"; "Manager", "Legal", "HR",
-"Approver") — you MUST group the flow nodes into `<bpmn:laneSet>`
-containing one `<bpmn:lane>` per role.
+"Директор", "Бухгалтерия", "Руководитель", "Сотрудник", "CEO"; "Manager",
+"Legal", "HR", "Approver") — you MUST group the flow nodes into
+`<bpmn:laneSet>` containing one `<bpmn:lane>` per role.
+
+EXPLICIT ROLE-ENUMERATION TRIGGERS — these phrases make lanes NON-OPTIONAL:
+  * RU: "используй роли", "с ролями", "в ролях", "в 2 ролях", "в 3 ролях",
+    "в 4 ролях", "роли:", "роль 1:", "актёры:", "участники:".
+  * EN: "use roles", "with roles", "in 2 roles", "in 3 roles", "roles:",
+    "actors:", "participants:", "swimlanes:", "by role".
+  * A comma-separated list of job titles in a single sentence like
+    "Сотрудник, Руководитель и Бухгалтерия…" / "Manager, Legal, Director…"
+    — treat each unique title as a separate role.
+  * A preamble line such as "Схема описывает процесс в N ролях: A, B, C."
+    — every item after the colon MUST become a lane.
+
+If you see ANY of these triggers you MUST produce a `<bpmn:laneSet>` with
+one lane per distinct role. Failing to do so breaks the user's request.
+Do NOT collapse multiple roles into a single lane. Do NOT drop a lane
+because it only has one task — a single-task lane is still required.
 
 Rules for lanes:
   * The `<bpmn:laneSet>` element MUST appear AS THE FIRST CHILD of
     `<bpmn:process>`, BEFORE any startEvent/task/gateway.
   * Each `<bpmn:lane>` MUST have an `id` and a `name` (the role label —
-    in the user's language).
+    in the user's language, verbatim).
   * Each `<bpmn:lane>` contains one `<bpmn:flowNodeRef>{flow-node-id}</bpmn:flowNodeRef>`
     child per flow node performed by that role.
   * EVERY flow node in the process (including startEvent, endEvent,
     gateways) MUST be referenced in EXACTLY ONE `<bpmn:flowNodeRef>`.
-  * If the description does NOT mention roles — DO NOT generate a
-    `<bpmn:laneSet>`. Produce a flat process without lanes.
+  * If the description does NOT mention roles AND none of the explicit
+    triggers above fire — DO NOT generate a `<bpmn:laneSet>`. Produce a
+    flat process without lanes.
   * Put startEvent in the role-lane where the process actually starts
     (usually the initiator). Put endEvent in the lane where the last
     action happens.
+  * When the description lists compound roles like "Руководитель/CEO ЦФО"
+    or "Кадры/Бухгалтерия" — preserve the compound label AS-IS in the
+    lane `name`; do NOT split it across multiple lanes unless the
+    description later references the two halves as separate actors.
 
 Example lane structure (Russian input, two roles):
 <bpmn:process id="Process_1" isExecutable="true">

@@ -15,7 +15,10 @@ GEMINI_THINKING_BUDGET = int(os.environ.get("GEMINI_THINKING_BUDGET", "2048"))
 DAILY_SPEND_LIMIT_USD = float(os.environ.get("DAILY_SPEND_LIMIT_USD", "5.0"))
 USAGE_DB_PATH = os.environ.get("USAGE_DB_PATH", "/tmp/bpmn_usage.sqlite3")
 USAGE_BUDGET_TIMEZONE = os.environ.get("USAGE_BUDGET_TIMEZONE", "UTC")
-REQUEST_CHAR_LIMIT = int(os.environ.get("REQUEST_CHAR_LIMIT", "12000"))
+# Description / prompt char cap. Raised 12000 → 20000 after client
+# feedback: real 10–13 KB PDF specs were getting rejected as too long.
+# 20000 matches the backend's MAX_MESSAGE_CHARS. Keep both in lockstep.
+REQUEST_CHAR_LIMIT = int(os.environ.get("REQUEST_CHAR_LIMIT", "20000"))
 BPMN_XML_CHAR_LIMIT = int(os.environ.get("BPMN_XML_CHAR_LIMIT", "250000"))
 
 # LLM backend: "gemini" (direct Google API) or "polza" (OpenAI-compatible via polza.ai)

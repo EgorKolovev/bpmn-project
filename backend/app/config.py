@@ -7,7 +7,10 @@ DATABASE_URL = os.environ.get(
 )
 
 ML_SERVICE_URL = os.environ.get("ML_SERVICE_URL", "http://localhost:8001")
-MAX_MESSAGE_CHARS = int(os.environ.get("MAX_MESSAGE_CHARS", "12000"))
+# Message char cap for /generate and /edit user prompts. Matched with
+# ml REQUEST_CHAR_LIMIT — both default to 20000. Raised from 12000 after
+# client feedback that 10–13 KB PDF-style specs were hitting the limit.
+MAX_MESSAGE_CHARS = int(os.environ.get("MAX_MESSAGE_CHARS", "20000"))
 SESSION_SECRET = os.environ.get("SESSION_SECRET")
 SESSION_SECRET_FILE = os.environ.get("SESSION_SECRET_FILE", "/data/session_secret.txt")
 INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY", "")
