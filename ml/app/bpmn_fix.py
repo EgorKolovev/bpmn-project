@@ -154,6 +154,67 @@ def strip_bpmn_diagram(xml_string: str) -> str:
     )
 
 
+# Namespaces that LLMs commonly use but sometimes forget to declare on the
+# root element (causing "unbound prefix" XML parse errors). We pre-emptively
+# inject declarations when the prefix is used somewhere in the body but not
+# bound on the root element.
+_WELL_KNOWN_NAMESPACES = {
+    "xsi": "http://www.w3.org/2001/XMLSchema-instance",
+    "bpmn": "http://www.omg.org/spec/BPMN/20100524/MODEL",
+    "bpmndi": "http://www.omg.org/spec/BPMN/20100524/DI",
+    "dc": "http://www.omg.org/spec/DD/20100524/DC",
+    "di": "http://www.omg.org/spec/DD/20100524/DI",
+}
+
+
+def fix_missing_namespace_declarations(xml_string: str) -> str:
+    """If the XML uses a `prefix:` on attributes/elements but doesn't declare
+    `xmlns:prefix=...` on the root element, inject the declaration.
+
+    This is a textual fix applied BEFORE parsing — catches errors like
+    ``<bpmn:definitions xmlns:bpmn="..."><sequenceFlow><conditionExpression
+    xsi:type="...">…`` where the LLM used `xsi:` without binding it.
+
+    Only well-known BPMN-related prefixes are auto-bound. Unknown prefixes
+    are left alone so we don't mask real errors.
+    """
+    if not xml_string or "<" not in xml_string:
+        return xml_string
+
+    # Find the first tag that looks like the root element (first `<…>`
+    # not counting declarations/comments).
+    m = re.search(r"<([A-Za-z_][\w\-.]*:)?([A-Za-z_][\w\-.]*)([^>]*)>", xml_string)
+    if not m:
+        return xml_string
+
+    # Skip XML decl <?xml …?> and comments
+    # (regex above already matches element tags only, since it captures name)
+    root_full = m.group(0)
+    root_attrs = m.group(3) or ""
+
+    # Which prefixes does the document reference anywhere?
+    used_prefixes = set(re.findall(r"(?<![A-Za-z0-9_.-])([A-Za-z_][\w\-.]*):[A-Za-z_]", xml_string))
+    # Which are already declared on the root?
+    declared_prefixes = set(re.findall(r'xmlns:([A-Za-z_][\w\-.]*)\s*=', root_attrs))
+
+    missing = [
+        p for p in used_prefixes
+        if p in _WELL_KNOWN_NAMESPACES
+        and p not in declared_prefixes
+        and p != "xmlns"
+    ]
+    if not missing:
+        return xml_string
+
+    injection = "".join(
+        f' xmlns:{p}="{_WELL_KNOWN_NAMESPACES[p]}"' for p in missing
+    )
+    fixed_root = root_full[:-1] + injection + ">"
+    result = xml_string.replace(root_full, fixed_root, 1)
+    logger.info("Injected missing namespace declarations: %s", ", ".join(missing))
+    return result
+
+
 def ensure_lane_refs(xml_string: str) -> str:
     """If the process has a <bpmn:laneSet>, make sure EVERY flow node is
     referenced in exactly ONE <bpmn:flowNodeRef>. Fix-ups:

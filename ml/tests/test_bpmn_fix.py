@@ -1,6 +1,10 @@
 import pytest
 import xml.etree.ElementTree as ET
-from app.bpmn_fix import ensure_incoming_outgoing, strip_bpmn_diagram
+from app.bpmn_fix import (
+    ensure_incoming_outgoing,
+    fix_missing_namespace_declarations,
+    strip_bpmn_diagram,
+)
 
 
 BPMN_NS = "http://www.omg.org/spec/BPMN/20100524/MODEL"
@@ -261,6 +265,73 @@ class TestStripBpmnDiagram:
             <bpmn:startEvent id="S1"/>
           </bpmn:process>
         </bpmn:definitions>"""
-
         result = strip_bpmn_diagram(xml)
         assert "startEvent" in result
+
+
+class TestFixMissingNamespaceDeclarations:
+    def test_injects_xsi_when_used_but_undeclared(self):
+        """LLM sometimes emits xsi:type without binding xmlns:xsi."""
+        xml = (
+            '<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">'
+            '<bpmn:process id="P1">'
+            '<bpmn:sequenceFlow id="F1" sourceRef="A" targetRef="B">'
+            '<bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">ok</bpmn:conditionExpression>'
+            '</bpmn:sequenceFlow>'
+            '</bpmn:process>'
+            '</bpmn:definitions>'
+        )
+        fixed = fix_missing_namespace_declarations(xml)
+        assert 'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"' in fixed
+        # Should now parse without errors
+        ET.fromstring(fixed)
+
+    def test_no_change_when_already_declared(self):
+        xml = (
+            '<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"'
+            ' xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
+            '<bpmn:process id="P1"/>'
+            '</bpmn:definitions>'
+        )
+        assert fix_missing_namespace_declarations(xml) == xml
+
+    def test_no_change_when_prefix_not_used(self):
+        xml = (
+            '<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">'
+            '<bpmn:process id="P1"/>'
+            '</bpmn:definitions>'
+        )
+        # No `xsi:` in body → nothing to inject
+        assert fix_missing_namespace_declarations(xml) == xml
+
+    def test_unknown_prefix_left_alone(self):
+        """We only auto-bind well-known prefixes; mystery ones are left alone
+        so we don't hide real bugs."""
+        xml = (
+            '<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">'
+            '<bpmn:process id="P1">'
+            '<weird:thing xyz="z"/>'
+            '</bpmn:process>'
+            '</bpmn:definitions>'
+        )
+        assert fix_missing_namespace_declarations(xml) == xml
+
+    def test_empty_input(self):
+        assert fix_missing_namespace_declarations("") == ""
+        assert fix_missing_namespace_declarations("   ") == "   "
+
+    def test_idempotent(self):
+        xml = (
+            '<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">'
+            '<bpmn:process id="P1">'
+            '<bpmn:sequenceFlow id="F1">'
+            '<bpmn:conditionExpression xsi:type="t">ok</bpmn:conditionExpression>'
+            '</bpmn:sequenceFlow>'
+            '</bpmn:process>'
+            '</bpmn:definitions>'
+        )
+        once = fix_missing_namespace_declarations(xml)
+        twice = fix_missing_namespace_declarations(once)
+        assert once == twice
+
+

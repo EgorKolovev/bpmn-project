@@ -8,7 +8,12 @@ from app.budget import BudgetTracker, DailyBudgetExceededError, format_usd_from_
 from app.config import MAX_OUTPUT_TOKENS
 from app.prompts import SYSTEM_PROMPT_CLASSIFY, SYSTEM_PROMPT_GENERATE, SYSTEM_PROMPT_EDIT
 from app.validator import validate_bpmn_xml, get_bpmn_warnings
-from app.bpmn_fix import ensure_incoming_outgoing, ensure_lane_refs, strip_bpmn_diagram
+from app.bpmn_fix import (
+    ensure_incoming_outgoing,
+    ensure_lane_refs,
+    fix_missing_namespace_declarations,
+    strip_bpmn_diagram,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -268,6 +273,7 @@ class LLMClient:
 
             bpmn_xml = self._unescape_xml(result["bpmn_xml"])
             bpmn_xml = strip_bpmn_diagram(bpmn_xml)
+            bpmn_xml = fix_missing_namespace_declarations(bpmn_xml)
             error = validate_bpmn_xml(bpmn_xml)
             if error is None:
                 bpmn_xml = ensure_incoming_outgoing(bpmn_xml)
@@ -303,6 +309,7 @@ class LLMClient:
 
             new_xml = self._unescape_xml(result["bpmn_xml"])
             new_xml = strip_bpmn_diagram(new_xml)
+            new_xml = fix_missing_namespace_declarations(new_xml)
             error = validate_bpmn_xml(new_xml)
             if error is None:
                 new_xml = ensure_incoming_outgoing(new_xml)

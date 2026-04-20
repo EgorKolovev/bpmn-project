@@ -1,7 +1,7 @@
 import os
 
 
-DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite-preview")
 MAX_OUTPUT_TOKENS = int(os.environ.get("GEMINI_MAX_OUTPUT_TOKENS", "16384"))
 DAILY_SPEND_LIMIT_USD = float(os.environ.get("DAILY_SPEND_LIMIT_USD", "5.0"))
 USAGE_DB_PATH = os.environ.get("USAGE_DB_PATH", "/tmp/bpmn_usage.sqlite3")
@@ -39,7 +39,7 @@ DEFAULT_PRICING_PER_MILLION_USD = {
     },
 }
 
-FALLBACK_PRICING = DEFAULT_PRICING_PER_MILLION_USD["gemini-2.5-flash"]
+FALLBACK_PRICING = DEFAULT_PRICING_PER_MILLION_USD["gemini-3.1-flash-lite-preview"]
 
 
 def get_input_price_per_million_usd(model: str) -> float:
