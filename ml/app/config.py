@@ -35,8 +35,10 @@ USAGE_BUDGET_TIMEZONE = os.environ.get("USAGE_BUDGET_TIMEZONE", "UTC")
 REQUEST_CHAR_LIMIT = int(os.environ.get("REQUEST_CHAR_LIMIT", "20000"))
 BPMN_XML_CHAR_LIMIT = int(os.environ.get("BPMN_XML_CHAR_LIMIT", "250000"))
 
-# LLM backend: "gemini" (direct Google API) or "polza" (OpenAI-compatible via polza.ai)
-LLM_BACKEND = os.environ.get("LLM_BACKEND", "gemini")
+# LLM backend: "gemini" (direct Google API) or "polza" (OpenAI-compatible via polza.ai).
+# Polza is the default — aligns with client infrastructure. `thinkingBudget`
+# is mapped to `reasoning.effort` (low/medium/high) inside PolzaBackend.
+LLM_BACKEND = os.environ.get("LLM_BACKEND", "polza")
 
 # Polza.ai settings
 POLZA_API_KEY = os.environ.get("POLZA_API_KEY", "")

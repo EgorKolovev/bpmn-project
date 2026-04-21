@@ -6,6 +6,24 @@ from typing import Any, Dict, Optional
 
 from app.budget import BudgetTracker, DailyBudgetExceededError, format_usd_from_nanodollars
 from app.config import GEMINI_THINKING_BUDGET, MAX_OUTPUT_TOKENS
+
+
+def _map_budget_to_effort(budget: int) -> Optional[str]:
+    """Map Gemini-native `thinkingBudget` (token count) to OpenAI-style
+    `reasoning.effort` enum used by Polza.
+
+    Polza's OpenAI-compatible surface doesn't accept raw token counts —
+    only low/medium/high. Keep thresholds aligned with what we've
+    benchmarked on Gemini direct: ≤ 2048 ≈ low, 2049-5000 ≈ medium,
+    > 5000 ≈ high. Budget = 0 → no reasoning.
+    """
+    if budget <= 0:
+        return None
+    if budget <= 2048:
+        return "low"
+    if budget <= 5000:
+        return "medium"
+    return "high"
 from app.prompts import SYSTEM_PROMPT_CLASSIFY, SYSTEM_PROMPT_GENERATE, SYSTEM_PROMPT_EDIT
 from app.validator import validate_bpmn_xml, get_bpmn_warnings
 from app.bpmn_fix import (
@@ -300,7 +318,7 @@ class PolzaBackend:
             }
         else:
             response_format = {"type": "json_object"}
-        payload = {
+        payload: Dict[str, Any] = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": system_prompt},
@@ -310,6 +328,15 @@ class PolzaBackend:
             "max_tokens": self.max_output_tokens,
             "response_format": response_format,
         }
+        # Polza supports OpenAI-style `reasoning.effort` (o-series shape).
+        # We mirror Gemini's thinkingBudget → effort bucket so both
+        # backends produce comparable branching quality on long specs.
+        # Verified experimentally: `reasoning: {effort: "high"}` is
+        # the form Polza accepts; `reasoning_effort` (flat) and
+        # `thinking: {budget_tokens: ...}` are silently ignored.
+        effort = _map_budget_to_effort(GEMINI_THINKING_BUDGET)
+        if effort is not None:
+            payload["reasoning"] = {"effort": effort}
         response = await self.http_client.post("/chat/completions", json=payload)
         response.raise_for_status()
         data = response.json()

@@ -165,3 +165,44 @@ class TestCharLimitRaised:
             f"REQUEST_CHAR_LIMIT = {config.REQUEST_CHAR_LIMIT} is too tight "
             "for real customer specs (10–13 KB PDFs)."
         )
+
+
+class TestPolzaReasoningMapping:
+    """Polza's OpenAI-compatible surface uses `reasoning.effort` enum
+    instead of Gemini's `thinkingBudget` token count. We map between
+    the two so operators can tune one knob regardless of backend."""
+
+    def test_zero_disables_reasoning(self):
+        from app.llm import _map_budget_to_effort
+        assert _map_budget_to_effort(0) is None
+
+    def test_negative_disables_reasoning(self):
+        """Defensive: -1 (dynamic) also disables — dynamic is
+        explicitly forbidden anyway, but don't crash on it."""
+        from app.llm import _map_budget_to_effort
+        assert _map_budget_to_effort(-1) is None
+
+    def test_low_bucket(self):
+        from app.llm import _map_budget_to_effort
+        assert _map_budget_to_effort(512) == "low"
+        assert _map_budget_to_effort(1024) == "low"
+        assert _map_budget_to_effort(2048) == "low"
+
+    def test_medium_bucket(self):
+        from app.llm import _map_budget_to_effort
+        assert _map_budget_to_effort(2049) == "medium"
+        assert _map_budget_to_effort(4096) == "medium"
+        assert _map_budget_to_effort(5000) == "medium"
+
+    def test_high_bucket(self):
+        from app.llm import _map_budget_to_effort
+        assert _map_budget_to_effort(5001) == "high"
+        assert _map_budget_to_effort(8000) == "high"
+        assert _map_budget_to_effort(16384) == "high"
+
+    def test_default_budget_maps_to_medium(self):
+        """Current default (4096) should map to `medium` effort —
+        that's what PDF benchmarks were validated with."""
+        from app import config
+        from app.llm import _map_budget_to_effort
+        assert _map_budget_to_effort(config.GEMINI_THINKING_BUDGET) == "medium"

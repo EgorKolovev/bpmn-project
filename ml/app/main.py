@@ -165,7 +165,10 @@ async def classify(request: ClassifyRequest):
         raise HTTPException(status_code=429, detail=str(exc))
     except LLMClientError as exc:
         logger.error("Classification failed: %s", exc)
-        raise HTTPException(status_code=exc.status_code, detail="Processing failed.")
+        # Pass the backend's message through (e.g. "Polza credits exhausted…")
+        # so operators see the root cause instead of a generic "Processing
+        # failed" — matches /generate and /edit behavior for consistency.
+        raise HTTPException(status_code=exc.status_code, detail=str(exc))
     except Exception:
         logger.exception("Classification failed unexpectedly")
         raise HTTPException(status_code=500, detail="Processing failed.")
