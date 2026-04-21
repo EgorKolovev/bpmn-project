@@ -6,6 +6,7 @@ Covers three recovery strategies in `LLMClient._extract_json`:
      escaped — Anton's "командировка" failure mode on flash-lite).
   3. Regex-based outer {...} extraction (chatty wrappers).
 """
+import json
 import os
 
 os.environ.setdefault("GEMINI_API_KEY", "test-key-for-unit-tests")
@@ -206,3 +207,97 @@ class TestPolzaReasoningMapping:
         from app import config
         from app.llm import _map_budget_to_effort
         assert _map_budget_to_effort(config.GEMINI_THINKING_BUDGET) == "medium"
+
+
+class TestPolza402Translation:
+    """Polza returns 402 in at least two shapes — balance depletion vs
+    daily spend cap. We parse the error body so operators see exactly
+    which knob to reach for.
+    """
+
+    def _make_http_error(self, body: dict):
+        """Build a fake httpx.HTTPStatusError with the given body."""
+        import httpx
+        request = httpx.Request("POST", "https://polza.ai/api/v1/chat/completions")
+        response = httpx.Response(402, content=json.dumps(body).encode(), request=request)
+        return httpx.HTTPStatusError("402", request=request, response=response)
+
+    def test_daily_cap_message_recognized(self):
+        from app.llm import PolzaBackend
+        backend = PolzaBackend(
+            api_key="x", model="y/z", base_url="http://localhost", max_output_tokens=100,
+        )
+        try:
+            exc = self._make_http_error({
+                "error": {
+                    "code": "INSUFFICIENT_BALANCE",
+                    "message": "Достигнут дневной лимит по сумме",
+                },
+                "trace_id": "abc",
+            })
+            err = backend.translate_http_error(exc)
+            assert err.status_code == 402
+            assert "INSUFFICIENT_BALANCE" in err.message
+            assert "Достигнут дневной лимит" in err.message
+            assert "Daily spend cap reached" in err.message
+            assert "polza.ai/dashboard" in err.message
+        finally:
+            import asyncio
+            try:
+                loop = asyncio.new_event_loop()
+                loop.run_until_complete(backend.close())
+                loop.close()
+            except Exception:
+                pass
+
+    def test_generic_insufficient_balance(self):
+        from app.llm import PolzaBackend
+        backend = PolzaBackend(
+            api_key="x", model="y/z", base_url="http://localhost", max_output_tokens=100,
+        )
+        try:
+            exc = self._make_http_error({
+                "error": {
+                    "code": "INSUFFICIENT_BALANCE",
+                    "message": "Insufficient balance",
+                },
+            })
+            err = backend.translate_http_error(exc)
+            assert err.status_code == 402
+            assert "INSUFFICIENT_BALANCE" in err.message
+            assert "Top up at https://polza.ai/dashboard" in err.message
+            # Must NOT suggest daily cap workaround for generic insufficient
+            assert "Daily spend cap" not in err.message
+        finally:
+            import asyncio
+            try:
+                loop = asyncio.new_event_loop()
+                loop.run_until_complete(backend.close())
+                loop.close()
+            except Exception:
+                pass
+
+    def test_unknown_body_still_ok(self):
+        """Defensive: if Polza ever changes the error shape, we still
+        return a 402 LLMClientError with a fallback message rather
+        than crashing."""
+        from app.llm import PolzaBackend
+        backend = PolzaBackend(
+            api_key="x", model="y/z", base_url="http://localhost", max_output_tokens=100,
+        )
+        try:
+            import httpx
+            request = httpx.Request("POST", "https://polza.ai/api/v1/chat/completions")
+            response = httpx.Response(402, content=b"not json at all", request=request)
+            exc = httpx.HTTPStatusError("402", request=request, response=response)
+            err = backend.translate_http_error(exc)
+            assert err.status_code == 402
+            assert "Polza" in err.message
+        finally:
+            import asyncio
+            try:
+                loop = asyncio.new_event_loop()
+                loop.run_until_complete(backend.close())
+                loop.close()
+            except Exception:
+                pass

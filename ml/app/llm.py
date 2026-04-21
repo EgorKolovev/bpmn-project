@@ -355,19 +355,54 @@ class PolzaBackend:
         if exc.response is None:
             return LLMClientError("Polza API request failed.")
         status_code = exc.response.status_code
+        # Polza returns a structured error body — parse it so we can
+        # distinguish "balance=0" from "daily cap reached" (both 402).
+        # Observed body shapes:
+        #   {"error": {"code": "INSUFFICIENT_BALANCE",
+        #              "message": "Достигнут дневной лимит по сумме"},
+        #    "trace_id": "..."}
+        polza_code = ""
+        polza_message = ""
+        try:
+            body = exc.response.json()
+            err = body.get("error", {})
+            polza_code = err.get("code", "")
+            polza_message = err.get("message", "")
+        except Exception:
+            pass
+
         if status_code == 400:
-            return LLMClientError("API rejected the request.")
+            return LLMClientError("Polza API rejected the request.")
         if status_code in (401, 403):
-            return LLMClientError("API authentication failed.")
+            return LLMClientError("Polza API authentication failed.")
         if status_code == 402:
-            return LLMClientError(
-                "Polza API credits exhausted. Top up your balance at "
-                "https://polza.ai/dashboard or switch LLM_BACKEND to 'gemini'.",
-                status_code=402,
-            )
+            # The Polza dashboard has TWO separate guards, both returning
+            # 402 with code=INSUFFICIENT_BALANCE but different messages:
+            #   * "Достигнут дневной лимит по сумме" — daily spend cap
+            #     (balance may still be positive, just raise the cap).
+            #   * generic balance depletion — top up the account.
+            # Surface Polza's own wording so operators know which knob
+            # to reach for.
+            prefix = "Polza API error"
+            if polza_code:
+                prefix = f"Polza API error ({polza_code})"
+            if "дневн" in polza_message.lower() or "daily" in polza_message.lower():
+                hint = (
+                    "Daily spend cap reached on Polza — raise it at "
+                    "https://polza.ai/dashboard or wait until the cap "
+                    "resets. As a quick workaround, flip "
+                    "LLM_BACKEND=gemini on the server."
+                )
+            else:
+                hint = (
+                    "Top up at https://polza.ai/dashboard or flip "
+                    "LLM_BACKEND=gemini on the server."
+                )
+            detail = f"{prefix}: {polza_message}. {hint}" if polza_message else f"{prefix}. {hint}"
+            return LLMClientError(detail, status_code=402)
         if status_code == 429:
-            return LLMClientError("API rate limit reached. Try again shortly.", status_code=503)
-        return LLMClientError("API request failed.")
+            return LLMClientError("Polza API rate limit reached. Try again shortly.", status_code=503)
+        return LLMClientError("Polza API request failed.")
 
     async def close(self):
         await self.http_client.aclose()
