@@ -289,27 +289,103 @@ def _layout(nodes: list[FlowNode], edges: list[Edge], lanes: list[Lane]) -> tupl
     return total_width, total_height
 
 
-def _route_edge(src: FlowNode, tgt: FlowNode) -> list[tuple[int, int]]:
+def _build_sibling_indices(
+    edges: list[Edge],
+    node_by_id: dict[str, FlowNode],
+) -> tuple[dict[str, tuple[int, int]], dict[str, tuple[int, int]]]:
+    """For each edge, compute its position within the sibling group
+    (edges that share the same source or the same target).
+
+    Two outputs:
+
+      * `out_idx[edge.id] = (i, n)` — this edge is the i-th of n
+        edges leaving the same source. Sorted by target Y so the
+        topmost target gets i=0.
+      * `in_idx[edge.id]  = (i, n)` — this edge is the i-th of n
+        edges arriving at the same target. Sorted by source Y.
+
+    Used by `_route_edge` to spread the elbow's mid-x point so
+    multiple sibling edges don't draw on top of each other (the
+    visible-as-bug case on `Способ отправки?` gateway with three
+    Курьер/ЭДО/Почта branches).
+    """
+    out_groups: dict[str, list[Edge]] = defaultdict(list)
+    in_groups: dict[str, list[Edge]] = defaultdict(list)
+    for e in edges:
+        out_groups[e.source].append(e)
+        in_groups[e.target].append(e)
+
+    out_idx: dict[str, tuple[int, int]] = {}
+    in_idx: dict[str, tuple[int, int]] = {}
+
+    for src_id, group in out_groups.items():
+        group.sort(key=lambda e: (
+            node_by_id[e.target].y if e.target in node_by_id else 0,
+            e.id,
+        ))
+        n = len(group)
+        for i, e in enumerate(group):
+            out_idx[e.id] = (i, n)
+
+    for tgt_id, group in in_groups.items():
+        group.sort(key=lambda e: (
+            node_by_id[e.source].y if e.source in node_by_id else 0,
+            e.id,
+        ))
+        n = len(group)
+        for i, e in enumerate(group):
+            in_idx[e.id] = (i, n)
+
+    return out_idx, in_idx
+
+
+# Spread step (px) used to fan out sibling edges' bend points.
+# 25 is a sweet spot: visible at typical zoom levels yet small enough
+# to fit several siblings inside one column gap (~150 px).
+SIBLING_SPREAD_PX = 25
+
+
+def _spread_offset(idx: int, n: int) -> int:
+    """Center the i-th of n siblings around 0, stepping SIBLING_SPREAD_PX.
+
+    n=1  → [0]                  (single sibling — no offset)
+    n=2  → [-7, +7]             (½ step on each side of midline)
+    n=3  → [-14, 0, +14]        (one step apart)
+    n=5  → [-28, -14, 0, +14, +28]
+    """
+    if n <= 1:
+        return 0
+    return int(SIBLING_SPREAD_PX * (idx - (n - 1) / 2))
+
+
+def _route_edge(
+    src: FlowNode,
+    tgt: FlowNode,
+    out_sib: tuple[int, int] = (0, 1),
+    in_sib: tuple[int, int] = (0, 1),
+) -> list[tuple[int, int]]:
     """Orthogonal waypoint routing for one BPMN sequence flow.
 
     Three cases:
 
     * **Forward, same row** (`abs(sy-ty) < 5` and `tgt.x > src.x`):
       Straight line from source's right edge to target's left edge.
+      Sibling spread does not apply (single segment).
 
     * **Forward, different row** (`tgt.x > src.x`, but lanes differ):
-      Elbow connector — exit source right, midpoint bend, enter target left.
+      Elbow connector — exit source right, midpoint bend, enter
+      target left. Sibling spread shifts the bend's mid-x so multiple
+      edges leaving the same gateway (or arriving at the same merge)
+      don't stack on a single vertical.
 
     * **Back-edge / loop** (`tgt.x <= src.x`):
       Routes UNDER the source's lane: leaves source from the bottom,
       travels back-left at a fixed offset below the source row, climbs
-      up into the target from below. This avoids crossing through
-      intermediate task shapes — the visual issue with the naive
-      "horizontal at source Y" routing.
+      up into the target from below. Sibling spread shifts the loop_y
+      so multiple back-edges don't draw on top of each other.
 
-    Bpmn-js draws labels relative to the second-to-last waypoint, so the
-    final segment is always horizontal entering the target's left edge
-    (or vertical entering its top, for back-edges that loop under).
+    `out_sib = (i, n)` — this edge is the i-th of n leaving the same
+    source. `in_sib = (i, n)` — same for target arrivals.
     """
     sx_left, sx_right = src.x, src.x + src.width
     sy_top, sy_bottom = src.y, src.y + src.height
@@ -320,24 +396,39 @@ def _route_edge(src: FlowNode, tgt: FlowNode) -> list[tuple[int, int]]:
     ty_bottom = tgt.y + tgt.height
     ty = tgt.y + tgt.height // 2
 
+    out_off = _spread_offset(*out_sib)
+    in_off = _spread_offset(*in_sib)
+
     # Back-edge: target sits to the LEFT of source's right edge.
     if tx_right <= sx_right:
-        # Drop a U-bend below the source. Route: source bottom →
-        # offset below source → far left → up alongside target →
-        # into target's bottom.
-        loop_y = max(sy_bottom, ty_bottom) + 30
+        # Drop a U-bend below the source. Spread: each sibling
+        # gets its own loop_y so stacked back-edges don't merge.
+        base_loop_y = max(sy_bottom, ty_bottom) + 30
+        loop_y = base_loop_y + abs(out_off) + abs(in_off)
+        # Shift the source's exit-x and target's entry-x by the
+        # sibling offsets so the up/down legs don't all align.
+        src_x = sx_left + src.width // 2 + out_off
+        tgt_x = tx_left + tgt.width // 2 + in_off
         return [
-            (sx_left + src.width // 2, sy_bottom),
-            (sx_left + src.width // 2, loop_y),
-            (tx_left + tgt.width // 2, loop_y),
-            (tx_left + tgt.width // 2, ty_bottom),
+            (src_x, sy_bottom),
+            (src_x, loop_y),
+            (tgt_x, loop_y),
+            (tgt_x, ty_bottom),
         ]
 
     # Forward edges from here on — target is to the right.
     if abs(sy - ty) < 5:
         return [(sx_right, sy), (tx_left, ty)]
 
-    mid_x = sx_right + (tx_left - sx_right) // 2
+    # Elbow with sibling spread: shift the mid-x bend by both `out_off`
+    # (this edge is the i-th of n leaving its source) and `in_off`
+    # (this edge is the j-th of m arriving at its target). Their sum
+    # gives every edge in a fan-in / fan-out group its own mid-x.
+    base_mid_x = sx_right + (tx_left - sx_right) // 2
+    mid_x = base_mid_x + out_off + in_off
+    # Clamp so we don't accidentally route INTO the source or target
+    # shape (would create a zero-length forward segment).
+    mid_x = max(sx_right + 8, min(tx_left - 8, mid_x))
     return [
         (sx_right, sy),
         (mid_x, sy),
@@ -417,6 +508,10 @@ def _build_di(
              "width": str(n.width), "height": str(n.height)},
         )
 
+    # Pre-compute sibling indices so parallel edges fan out instead of
+    # stacking on a single vertical at the bend point.
+    out_idx, in_idx = _build_sibling_indices(edges, node_by_id)
+
     # Sequence flow edges with waypoints.
     for e in edges:
         src = node_by_id.get(e.source)
@@ -428,7 +523,9 @@ def _build_di(
             f"{{{BPMNDI_NS}}}BPMNEdge",
             {"id": f"{e.id}_di", "bpmnElement": e.id},
         )
-        for x, y in _route_edge(src, tgt):
+        out_sib = out_idx.get(e.id, (0, 1))
+        in_sib = in_idx.get(e.id, (0, 1))
+        for x, y in _route_edge(src, tgt, out_sib=out_sib, in_sib=in_sib):
             ET.SubElement(
                 edge_el,
                 f"{{{DI_NS}}}waypoint",

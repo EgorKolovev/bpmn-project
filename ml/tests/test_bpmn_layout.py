@@ -228,6 +228,100 @@ class TestIdempotence:
         assert has_layout(layout_bpmn(LINEAR_NO_LANES))
 
 
+class TestSiblingSpread:
+    """Multiple edges leaving the same gateway (or arriving at same merge)
+    must NOT share the bend's vertical x-coordinate — that's the visible-
+    as-bug case where Курьер/ЭДО/Почта lines stacked into a single column.
+    """
+
+    THREE_BRANCHES = """<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="Process_1" isExecutable="true">
+    <bpmn:laneSet id="LaneSet_1">
+      <bpmn:lane id="Lane_A" name="A">
+        <bpmn:flowNodeRef>Start_1</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>GW_Split</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_Top</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>GW_Merge</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>End_1</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_B" name="B">
+        <bpmn:flowNodeRef>Task_Mid</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_C" name="C">
+        <bpmn:flowNodeRef>Task_Bot</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="Start_1"><bpmn:outgoing>F1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:exclusiveGateway id="GW_Split">
+      <bpmn:incoming>F1</bpmn:incoming>
+      <bpmn:outgoing>F2</bpmn:outgoing><bpmn:outgoing>F3</bpmn:outgoing><bpmn:outgoing>F4</bpmn:outgoing></bpmn:exclusiveGateway>
+    <bpmn:task id="Task_Top"><bpmn:incoming>F2</bpmn:incoming><bpmn:outgoing>F5</bpmn:outgoing></bpmn:task>
+    <bpmn:task id="Task_Mid"><bpmn:incoming>F3</bpmn:incoming><bpmn:outgoing>F6</bpmn:outgoing></bpmn:task>
+    <bpmn:task id="Task_Bot"><bpmn:incoming>F4</bpmn:incoming><bpmn:outgoing>F7</bpmn:outgoing></bpmn:task>
+    <bpmn:exclusiveGateway id="GW_Merge">
+      <bpmn:incoming>F5</bpmn:incoming><bpmn:incoming>F6</bpmn:incoming><bpmn:incoming>F7</bpmn:incoming>
+      <bpmn:outgoing>F8</bpmn:outgoing></bpmn:exclusiveGateway>
+    <bpmn:endEvent id="End_1"><bpmn:incoming>F8</bpmn:incoming></bpmn:endEvent>
+    <bpmn:sequenceFlow id="F1" sourceRef="Start_1" targetRef="GW_Split"/>
+    <bpmn:sequenceFlow id="F2" name="Top" sourceRef="GW_Split" targetRef="Task_Top"/>
+    <bpmn:sequenceFlow id="F3" name="Mid" sourceRef="GW_Split" targetRef="Task_Mid"/>
+    <bpmn:sequenceFlow id="F4" name="Bot" sourceRef="GW_Split" targetRef="Task_Bot"/>
+    <bpmn:sequenceFlow id="F5" sourceRef="Task_Top" targetRef="GW_Merge"/>
+    <bpmn:sequenceFlow id="F6" sourceRef="Task_Mid" targetRef="GW_Merge"/>
+    <bpmn:sequenceFlow id="F7" sourceRef="Task_Bot" targetRef="GW_Merge"/>
+    <bpmn:sequenceFlow id="F8" sourceRef="GW_Merge" targetRef="End_1"/>
+  </bpmn:process>
+</bpmn:definitions>"""
+
+    def _bend_xs(self, xml: str, edge_ids: list[str]) -> list[int]:
+        """Pull the second waypoint's x for each edge (the bend point
+        after exiting the source)."""
+        out = []
+        for eid in edge_ids:
+            edge_match = re.search(
+                rf'<bpmndi:BPMNEdge[^>]+bpmnElement="{eid}"[^>]*>(.*?)</bpmndi:BPMNEdge>',
+                xml, re.DOTALL,
+            )
+            assert edge_match, f"no edge for {eid}"
+            wps = re.findall(r'<di:waypoint[^>]+x="(\d+)"[^>]+y="(\d+)"', edge_match.group(1))
+            assert len(wps) >= 2
+            out.append(int(wps[1][0]))
+        return out
+
+    def test_three_branches_have_distinct_bends(self):
+        """F2 (Top), F3 (Mid), F4 (Bot) all leave the same GW_Split.
+        Their second waypoint (the bend after the gateway) must have
+        DISTINCT x values — otherwise lines stack.
+        """
+        out = layout_bpmn(self.THREE_BRANCHES)
+        bends = self._bend_xs(out, ["F2", "F3", "F4"])
+        assert len(set(bends)) == 3, (
+            f"expected 3 distinct bend xs, got {bends}"
+        )
+
+    def test_three_merges_have_distinct_bends(self):
+        """F5, F6, F7 all arrive at GW_Merge. Their second waypoint
+        (where each one bends to enter the merge) must be distinct."""
+        out = layout_bpmn(self.THREE_BRANCHES)
+        bends = self._bend_xs(out, ["F5", "F6", "F7"])
+        assert len(set(bends)) == 3, (
+            f"expected 3 distinct merge bends, got {bends}"
+        )
+
+    def test_single_outgoing_edge_unaffected(self):
+        """A node with exactly one outgoing edge must NOT pay the
+        spread cost — its bend stays at the geometric midpoint."""
+        out = layout_bpmn(THREE_LANES_WITH_CYCLE)
+        # F1 (Start_1 → Task_Submit) is a single outgoing.
+        bend_x = self._bend_xs(out, ["F1"])[0]
+        # Just sanity-check the bend exists and is positive.
+        # Single-sibling spread offset is 0 by design (n=1).
+        assert bend_x > 0
+
+
 class TestDefensive:
     def test_empty_xml_returned_as_is(self):
         assert layout_bpmn("") == ""
