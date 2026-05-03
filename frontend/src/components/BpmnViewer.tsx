@@ -12,6 +12,20 @@ function stripDiagramInfo(xml: string): string {
   return xml.replace(/<bpmndi:BPMNDiagram[\s\S]*?<\/bpmndi:BPMNDiagram>/gi, "");
 }
 
+/**
+ * The ml service runs a lane-aware Python layouter (`bpmn_layout.py`)
+ * before returning XML, so most diagrams arrive with `<bpmndi:BPMNDiagram>`
+ * already populated — including swimlane shapes that the JS
+ * `bpmn-auto-layout` library does not produce.
+ *
+ * When that's the case we render as-is and skip the JS layouter.
+ * Fallback path stays in place for any diagram that arrives without DI
+ * (e.g. older ml versions, manual XML paste).
+ */
+function hasDiagramInfo(xml: string): boolean {
+  return /<\s*(?:bpmndi:)?BPMNDiagram\b/i.test(xml);
+}
+
 const BpmnViewer: React.FC<BpmnViewerProps> = ({ xml }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<any>(null);
@@ -22,6 +36,13 @@ const BpmnViewer: React.FC<BpmnViewerProps> = ({ xml }) => {
     if (!xml) return;
 
     const doLayout = async () => {
+      // Server-laid XML already has BPMNDiagram (incl. lanes) — render
+      // it directly. Only fall through to client-side `bpmn-auto-layout`
+      // for legacy / hand-supplied XML without DI.
+      if (hasDiagramInfo(xml)) {
+        setLayoutedXml(xml);
+        return;
+      }
       try {
         const stripped = stripDiagramInfo(xml);
         const result = await layoutProcess(stripped);

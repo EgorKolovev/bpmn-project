@@ -1,48 +1,60 @@
-# Web demo — командировка через Polza/Gemini
+# Web demo — командировка через `/generate`
 
-Артефакты прогона "сложного сценария" (PDF1 — Служебная командировка)
-через `/generate` endpoint, отрисовка в `bpmn-js` viewer (тот же
-рендерер, что использует наш фронтенд).
+Артефакты прогона PDF1 (Служебная командировка) через ml/`/generate`,
+с **новым server-side lane-aware layouter'ом** (`ml/app/bpmn_layout.py`).
 
 ## Параметры прогона
 
 - Модель: `gemini-3-flash-preview`
-- Backend: direct Gemini API (Polza dev-key упёрся в дневной cap)
+- Backend: direct Gemini (Polza dev-key был в дневном лимите)
 - thinkingBudget: 4096
-- Время: 27.1 s
-- Стоимость: ~$0.05 (по нашему локальному гарду)
+- Время: ~25–30 s
+- Layout: **server-side** (lane shapes + node positions + edge waypoints
+  baked в response XML)
 
 ## Структурные метрики
 
 | Метрика | Значение |
 |---|---|
-| Lanes | 3 (Сотрудник / Руководитель CEO ЦФО / Бухгалтерия) |
-| Tasks | 15 |
-| Exclusive gateways | 8 |
-| Sequence flows | 29 |
+| Lanes | 3 (Сотрудник / Руководитель CEO ЦФО / Бухгалтерия/кадры) |
+| Tasks | 14–15 |
+| Exclusive gateways | 5–8 |
+| Sequence flows | 25–29 |
 | Cycle (back-edge) | ✓ — на доработку |
-| XML bytes | 9 429 |
+| BPMNShape count | 25 (3 lanes + 22 flow nodes) |
+| BPMNEdge count  | 25 |
+| Waypoints | ~80 (4 per back-edge, 2–4 per forward edge) |
 
 ## Файлы
 
-- `komandirovka.bpmn` — сырой XML, как его вернул `/generate`.
-- `komandirovka_layout.bpmn` — после прогона `bpmn-auto-layout`
-  (добавляет `bpmndi:BPMNDiagram` с координатами шейпов).
-- `komandirovka.svg` — готовый векторный рендер `bpmn-js` viewer'а.
+- `komandirovka.bpmn` — XML до layout (process + flow nodes + sequenceFlows).
+- `komandirovka_layout.bpmn` — XML после server-side layouter — **с
+  правильно расставленными lanes, нодами и waypoints**.
+- `komandirovka.svg` — векторный рендер `bpmn-js` viewer'а.
 
-## Замечание про lane-layout
+## Как layouter работает
 
-`bpmn-auto-layout` v0.4 не выкладывает `<bpmn:laneSet>` как
-горизонтальные дорожки — все 15 tasks в одну линию, поэтому SVG
-получается широким (3 533 × 370 единиц). Лейнсет в XML присутствует и
-корректен — проблема чисто в layout-движке. На реальном фронтенде это
-выглядит так же, потому что мы используем тот же `bpmn-auto-layout`.
+1. Парсит `<bpmn:laneSet>` и список `<bpmn:flowNodeRef>` для каждого lane.
+2. Топологическая раскладка по колонкам (BFS от startEvents, back-edges
+   обрабатываются — снова не считают глубину).
+3. Каждой lane даётся горизонтальная полоса; нода размещается в
+   колонке × своей lane. Несколько нод в одной (lane × column) —
+   стэкуются вертикально.
+4. Edges:
+   * Forward, same row → прямая линия (2 waypoints).
+   * Forward, cross-lane → elbow (4 waypoints).
+   * Back-edge → **U-bend под ряд** (4 waypoints — обходит ноды без
+     overlap-а).
+5. Эмитит полный `<bpmndi:BPMNDiagram>` со всеми BPMNShape (включая
+   `isHorizontal="true"` для lanes), BPMNEdges и waypoints.
 
-Возможные направления чтобы это починить (не делал):
+## Что осталось как trade-off
 
-1. Перейти на `bpmnlint` + `bpmn-js-task-priority-color` или
-   `dagre`-based external layouter, который умеет swimlanes.
-2. Передавать модели подсказку «верстай горизонтальные lanes» —
-   некоторые BPMN-инструменты делают так.
-3. Свой layouter поверх готового XML на Python/Node — задача
-   отдельной итерации.
+- Простое orthogonal routing — несколько edges с одинаковым target Y
+  могут перекрываться. Бизнес-смысл сохраняется, но визуально
+  встречается слегка зашумлённое место.
+- Sub-rows внутри lane делятся равномерно по высоте — не идеально
+  оптимизирует пространство, но всегда даёт читаемый результат.
+- Front-end fallback (`bpmn-auto-layout` JS) остаётся в качестве
+  defence-in-depth: если ml вернул XML без BPMNDiagram (старая
+  версия / кастомный paste), фронт всё ещё отрисует.

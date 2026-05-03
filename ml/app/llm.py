@@ -32,6 +32,7 @@ from app.bpmn_fix import (
     fix_missing_namespace_declarations,
     strip_bpmn_diagram,
 )
+from app.bpmn_layout import layout_bpmn
 
 logger = logging.getLogger(__name__)
 
@@ -704,6 +705,10 @@ class LLMClient:
                 bpmn_xml = ensure_lane_refs(bpmn_xml)
                 for w in get_bpmn_warnings(bpmn_xml):
                     logger.warning("BPMN warning (generate): %s", w)
+                # Server-side lane-aware layout: writes BPMNDiagram with
+                # lane shapes + flow node positions + edge waypoints, so
+                # the front-end can skip its (lane-less) JS auto-layout.
+                bpmn_xml = layout_bpmn(bpmn_xml)
                 return {"bpmn_xml": bpmn_xml, "session_name": result["session_name"]}
 
             logger.warning("Attempt %d: Invalid BPMN XML: %s", attempt + 1, error)
@@ -724,6 +729,7 @@ class LLMClient:
             )
             bpmn_xml = ensure_incoming_outgoing(last_xml_without_lanes)
             bpmn_xml = ensure_lane_refs(bpmn_xml)
+            bpmn_xml = layout_bpmn(bpmn_xml)
             return {"bpmn_xml": bpmn_xml, "session_name": last_session_name}
 
         raise ValueError(
@@ -768,6 +774,7 @@ class LLMClient:
                 new_xml = ensure_lane_refs(new_xml)
                 for w in get_bpmn_warnings(new_xml):
                     logger.warning("BPMN warning (edit): %s", w)
+                new_xml = layout_bpmn(new_xml)
                 return {"bpmn_xml": new_xml}
 
             logger.warning(f"Attempt {attempt + 1}: Invalid edited BPMN XML: {error}")
