@@ -81,20 +81,36 @@ jobs:
       - uses: actions/checkout@v4
       - name: Generate .env from .env.prod
         run: |
-          # GEMINI_API_KEY is required (LLM_BACKEND=gemini is the default).
-          # Get a key free at https://aistudio.google.com/apikey and add
-          # it as a GitHub Actions secret before running this workflow.
+          # Both keys are provisioned so ops can flip LLM_BACKEND at any
+          # time without redeploying. We only fail early on the key that
+          # the *currently selected* backend actually needs.
           export GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}"
           export POLZA_API_KEY="${{ secrets.POLZA_API_KEY }}"
           export POSTGRES_PASSWORD="${{ secrets.POSTGRES_PASSWORD }}"
           export INTERNAL_API_KEY="${{ secrets.INTERNAL_API_KEY }}"
           export CORS_ALLOWED_ORIGINS="${{ secrets.CORS_ALLOWED_ORIGINS }}"
           envsubst < .env.prod > .env
-          # Sanity check — fail early if GEMINI_API_KEY missing.
-          if ! grep -q "^GEMINI_API_KEY=AI" .env; then
-            echo "::error::GEMINI_API_KEY secret is not set (or empty). Add it at"
-            echo "::error::  Settings → Secrets and variables → Actions → New secret"
-            echo "::error::  Get a free key at https://aistudio.google.com/apikey"
+
+          # Sanity check — fail early if the secret needed by the
+          # currently configured LLM_BACKEND is missing or empty.
+          backend=$(grep -E "^LLM_BACKEND=" .env | cut -d= -f2 | tr -d '[:space:]')
+          backend=${backend:-polza}
+          if [ "$backend" = "gemini" ]; then
+            if ! grep -qE "^GEMINI_API_KEY=AI[A-Za-z0-9_-]+$" .env; then
+              echo "::error::GEMINI_API_KEY secret missing (LLM_BACKEND=gemini)."
+              echo "::error::  Add the secret at: Settings → Secrets and variables → Actions"
+              echo "::error::  Get a free key at: https://aistudio.google.com/apikey"
+              exit 1
+            fi
+          elif [ "$backend" = "polza" ]; then
+            if ! grep -qE "^POLZA_API_KEY=pza_[A-Za-z0-9_-]+$" .env; then
+              echo "::error::POLZA_API_KEY secret missing (LLM_BACKEND=polza)."
+              echo "::error::  Add the secret at: Settings → Secrets and variables → Actions"
+              echo "::error::  Get a key from: https://polza.ai/dashboard"
+              exit 1
+            fi
+          else
+            echo "::error::Unknown LLM_BACKEND='$backend' in .env.prod (expected 'gemini' or 'polza')."
             exit 1
           fi
       - name: Copy .env and docker-compose.yml to server
