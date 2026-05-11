@@ -1,8 +1,107 @@
+"""Shared test fixtures, helpers, and constants for the ml service.
+
+Organized in sections:
+
+  * **Constants** — timeouts, RUN_E2E flag, sample process descriptions
+    that several test modules consume.
+  * **Sample XML** — `VALID_BPMN_XML*` used by unit tests of the fix
+    passes / validator / layouter.
+  * **i18n helpers** — `cyrillic_ratio`, `all_names_are_cyrillic`, …
+  * **Structural helpers** — element counts, gateway / lane / cycle
+    extraction. Pure-function utilities re-used across unit tests
+    and the slim E2E layer.
+  * **Fixtures** — `ml_client` async httpx client (for E2E),
+    `_classify / _generate / _edit` helper coroutines that all E2E
+    tests call.
+
+Anything that *can* be a plain function lives here as one, so test
+modules stay focused on assertions.
+"""
+import asyncio
 import os
 import re
+from types import SimpleNamespace
+from typing import Any
 
+import httpx
 import pytest
+import pytest_asyncio
 from defusedxml import ElementTree as ET
+
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+#: Set RUN_E2E=1 to enable the slim real-LLM E2E layer. Without it the
+#: E2E module is skipped at collection time.
+RUN_E2E = os.environ.get("RUN_E2E", "0") == "1"
+
+
+#: Centralised timeouts (seconds). Touched from multiple test modules,
+#: so a single change here propagates everywhere.
+TIMEOUTS = SimpleNamespace(
+    # Per-LLM-call upper bound. Matches `GeminiBackend.http_client.timeout`
+    # in `ml/app/llm.py`. Stretchy enough for a 4096-token thinking pass
+    # plus a 32 KB BPMN payload.
+    LLM_CALL=180.0,
+    # Outer HTTP client used by /classify, /generate, /edit E2E tests.
+    # Slightly bigger than LLM_CALL so an internal retry can fit before
+    # we surface a timeout.
+    ML_HTTP=200.0,
+    # Tighter window for cheap calls (classify is small).
+    CLASSIFY=30.0,
+    # Used by Socket.IO `wait_for_action` to give the server room to
+    # round-trip through ml → LLM → back.
+    SOCKETIO_EVENT=90.0,
+    # Initial Socket.IO handshake + init_data round-trip.
+    SOCKETIO_INIT=15.0,
+)
+
+
+#: pytest-rerunfailures retry knobs for the slim E2E layer.
+E2E_RERUNS = 2
+E2E_RERUN_DELAY = 2
+
+#: Shared marker stack for E2E tests — applied to `pytestmark` at the
+#: module top level. Combines `@pytest.mark.e2e` (so we can `-m e2e` or
+#: `-m "not e2e"`), the env-gate, and flaky retries.
+E2E_MARKERS = [
+    pytest.mark.e2e,
+    pytest.mark.skipif(not RUN_E2E, reason="Set RUN_E2E=1 to run E2E tests"),
+    pytest.mark.flaky(reruns=E2E_RERUNS, reruns_delay=E2E_RERUN_DELAY),
+]
+
+
+# ---------------------------------------------------------------------------
+# Sample process descriptions used across the integration + E2E layers.
+# Kept as module-level constants so a single edit propagates everywhere
+# and so test files can be diffed without hunting for inline strings.
+# ---------------------------------------------------------------------------
+
+RU_VALID_PROCESS = (
+    "Процесс согласования договора: менеджер создаёт заявку, "
+    "юрист проверяет документы, директор подписывает."
+)
+
+RU_PROCESS_WITH_REWORK = (
+    "Контракт: менеджер создаёт заявку, юрист проверяет. Если есть "
+    "замечания — возвращает на доработку, иначе директор подписывает."
+)
+
+RU_PROCESS_WITH_LANES = (
+    "Согласование заявки: Менеджер создаёт заявку. Директор рассматривает "
+    "и принимает решение. Если одобрено — менеджер отправляет клиенту. "
+    "Если отклонено — менеджер уведомляет клиента об отказе."
+)
+
+EN_LINEAR_PROCESS = (
+    "Order fulfillment: customer places order, payment is verified, "
+    "item is shipped to the customer."
+)
+
+EN_INVALID_GARBAGE = "What is the weather today?"
+RU_INVALID_GARBAGE = "Какая сегодня погода?"
 
 
 VALID_BPMN_XML = """<?xml version="1.0" encoding="UTF-8"?>
@@ -386,3 +485,176 @@ def backend_base_url() -> str:
 def internal_api_key() -> str:
     """Shared secret for backend → ml calls. Tests skip if unset."""
     return os.environ.get("INTERNAL_API_KEY", "")
+
+
+# ---------------------------------------------------------------------------
+# E2E HTTP helpers
+#
+# `ml_client` and the `_classify / _generate / _edit` coroutines below
+# used to live duplicated across `test_complex_e2e.py`, `test_i18n_e2e.py`
+# and `test_lanes_e2e.py`. Centralised here so the slim E2E layer can
+# `from tests.conftest import _classify, _generate, _edit, ml_client`
+# and stay focused on assertions.
+# ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture
+async def ml_client(ml_base_url, internal_api_key):
+    """An async httpx client preconfigured with the right base URL and
+    X-Internal-Api-Key header.
+
+    Skips the test (rather than erroring) when INTERNAL_API_KEY isn't
+    set — keeps E2E opt-in clean.
+    """
+    if not internal_api_key:
+        pytest.skip("INTERNAL_API_KEY env var not set; skipping E2E test.")
+    headers = {"X-Internal-Api-Key": internal_api_key}
+    async with httpx.AsyncClient(
+        base_url=ml_base_url,
+        headers=headers,
+        timeout=TIMEOUTS.ML_HTTP,
+    ) as client:
+        yield client
+
+
+async def _classify(client: httpx.AsyncClient, text: str) -> dict[str, Any]:
+    resp = await client.post("/classify", json={"text": text}, timeout=TIMEOUTS.CLASSIFY)
+    assert resp.status_code == 200, (
+        f"/classify failed: {resp.status_code} {resp.text}"
+    )
+    return resp.json()
+
+
+async def _generate(client: httpx.AsyncClient, description: str) -> dict[str, Any]:
+    resp = await client.post(
+        "/generate",
+        json={"description": description},
+        timeout=TIMEOUTS.LLM_CALL,
+    )
+    assert resp.status_code == 200, (
+        f"/generate failed: {resp.status_code} {resp.text}"
+    )
+    return resp.json()
+
+
+async def _edit(
+    client: httpx.AsyncClient, prompt: str, bpmn_xml: str
+) -> dict[str, Any]:
+    resp = await client.post(
+        "/edit",
+        json={"prompt": prompt, "bpmn_xml": bpmn_xml},
+        timeout=TIMEOUTS.LLM_CALL,
+    )
+    assert resp.status_code == 200, (
+        f"/edit failed: {resp.status_code} {resp.text}"
+    )
+    return resp.json()
+
+
+# ---------------------------------------------------------------------------
+# Mock-LLM transport — used by Layer-2C integration tests in
+# `test_integration_llm.py` to feed canned responses to `GeminiBackend`
+# / `PolzaBackend` without touching the real Google / Polza APIs.
+#
+# Tests build a `MockTransport`-style callable that maps the request
+# path to the response shape they want to test against, then inject it
+# into the backend via:
+#
+#     monkeypatch.setattr(backend, "http_client",
+#                         httpx.AsyncClient(transport=MockTransport(fn)))
+#
+# The two helper factories below cover the most common cases.
+# ---------------------------------------------------------------------------
+
+
+def make_gemini_response(
+    *,
+    text: str,
+    prompt_tokens: int = 100,
+    output_tokens: int = 200,
+    thoughts_tokens: int = 50,
+    finish_reason: str = "STOP",
+) -> dict:
+    """Build a Gemini v1beta `generateContent` response body."""
+    return {
+        "candidates": [
+            {
+                "content": {"parts": [{"text": text}]},
+                "finishReason": finish_reason,
+            }
+        ],
+        "usageMetadata": {
+            "promptTokenCount": prompt_tokens,
+            "candidatesTokenCount": output_tokens,
+            "thoughtsTokenCount": thoughts_tokens,
+            "totalTokenCount": prompt_tokens + output_tokens + thoughts_tokens,
+        },
+    }
+
+
+def make_gemini_count_response(total_tokens: int = 100) -> dict:
+    """Build a Gemini `countTokens` response body."""
+    return {"totalTokens": total_tokens}
+
+
+def make_polza_response(
+    *,
+    content: str,
+    prompt_tokens: int = 100,
+    completion_tokens: int = 200,
+    reasoning_tokens: int = 50,
+) -> dict:
+    """Build a Polza (OpenAI-compatible) `chat/completions` response body."""
+    return {
+        "id": "test-gen-1",
+        "model": "google/gemini-3-flash-preview",
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": content},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+            "completion_tokens_details": {
+                "reasoning_tokens": reasoning_tokens,
+                "audio_tokens": 0,
+                "image_tokens": 0,
+            },
+        },
+    }
+
+
+def make_mock_transport(handlers) -> httpx.MockTransport:
+    """Adapter around `httpx.MockTransport` that lets tests supply a
+    simple `{path_suffix: response_dict}` mapping instead of having to
+    write a full request handler.
+
+    A handler can be:
+      * a `dict` → returned as 200 OK JSON;
+      * an `(status, dict)` tuple → returned as `status` JSON;
+      * a callable `(request: httpx.Request) -> httpx.Response` → invoked.
+
+    Passing a callable directly (not a dict) is also supported — it just
+    receives the request and returns the response unmodified.
+    """
+
+    if callable(handlers):
+        return httpx.MockTransport(handlers)
+
+    def _route(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        for needle, response in handlers.items():
+            if needle in url:
+                if callable(response):
+                    return response(request)
+                if isinstance(response, tuple) and len(response) == 2:
+                    status, body = response
+                    return httpx.Response(status, json=body)
+                return httpx.Response(200, json=response)
+        return httpx.Response(404, json={"error": f"no handler for {url}"})
+
+    return httpx.MockTransport(_route)
