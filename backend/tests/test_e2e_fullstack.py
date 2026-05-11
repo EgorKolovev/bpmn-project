@@ -9,16 +9,27 @@ and `test_lanes_fullstack.py` (5 tests). What we keep:
      LLM → result event, with Russian labels.
   2. **Classify rejection end-to-end** — invalid description never
      reaches /generate; the user sees an `error` event with a reason.
+  3. **Websocket reconnect** — open a session, disconnect, reconnect
+     with the stored (user_id, session_token), verify the session
+     list comes back. Exercises the real `connect`/`disconnect`
+     handlers plus the engine.io handshake `auth` payload — the
+     parts the integration tests stub out.
 
 Every other behaviour (routing, classify fallback, ML errors,
-session ownership, rate limit, validation) is covered by
-`tests/test_integration_backend.py` against mocked ml.
+session ownership, rate limit, validation, DB-unavailable, expired
+token) is covered by `tests/test_integration_backend.py` against
+mocked ml.
 
 Run with `RUN_E2E=1 pytest backend/tests/test_e2e_fullstack.py -v`.
 """
 import pytest
+import socketio  # python-socketio client
 
-from tests.conftest import E2E_MARKERS, TIMEOUTS
+from tests.conftest import (
+    E2E_MARKERS,
+    TIMEOUTS,
+    SocketConversation,
+)
 
 
 pytestmark = E2E_MARKERS
@@ -59,3 +70,78 @@ async def test_classify_rejection_round_trip(socketio_conversation):
         "error", timeout=TIMEOUTS.SOCKETIO_EVENT
     )
     assert error.get("message"), "expected non-empty error message"
+
+
+async def test_websocket_reconnect_restores_user_session(backend_url):
+    """Page-refresh / wifi-blip continuity, end-to-end over the real
+    Socket.IO transport.
+
+      1. Open client A, run init → receive (user_id, session_token).
+      2. Create a session via /generate so we have something to "lose".
+      3. Close client A.
+      4. Open client B with the saved credentials in the handshake
+         `auth` payload, run init.
+      5. Verify the server returned the same user_id AND the session
+         the first client created appears in `init_data.sessions`.
+
+    This is the only fullstack test that does NOT need the LLM, but
+    we keep it under E2E_MARKERS because it depends on the running
+    backend container (real ASGI server, real Socket.IO transport).
+    """
+    # --- Client A: init + create a session ---
+    client_a = socketio.AsyncClient(reconnection=False)
+    convo_a = SocketConversation(client_a)
+    await client_a.connect(backend_url, socketio_path="/socket.io")
+    try:
+        await convo_a.send({"action": "init"})
+        first_init = await convo_a.wait_for_action(
+            "init_data", timeout=TIMEOUTS.SOCKETIO_INIT
+        )
+        user_id = first_init["user_id"]
+        session_token = first_init["session_token"]
+        assert user_id and session_token, (
+            f"init_data missing credentials: {first_init!r}"
+        )
+
+        # Use a known-valid Russian process so /classify accepts it
+        # without burning LLM time on retries.
+        await convo_a.send(
+            {
+                "action": "message",
+                "text": (
+                    "Процесс согласования договора: менеджер создаёт "
+                    "заявку, юрист проверяет, директор подписывает."
+                ),
+            }
+        )
+        result = await convo_a.wait_for_action(
+            "result", timeout=TIMEOUTS.SOCKETIO_EVENT
+        )
+        created_session_id = result["session_id"]
+    finally:
+        await client_a.disconnect()
+
+    # --- Client B: reconnect with saved credentials ---
+    client_b = socketio.AsyncClient(reconnection=False)
+    convo_b = SocketConversation(client_b)
+    await client_b.connect(
+        backend_url,
+        socketio_path="/socket.io",
+        auth={"user_id": user_id, "session_token": session_token},
+    )
+    try:
+        await convo_b.send({"action": "init"})
+        second_init = await convo_b.wait_for_action(
+            "init_data", timeout=TIMEOUTS.SOCKETIO_INIT
+        )
+        assert second_init["user_id"] == user_id, (
+            f"reconnect changed user_id: {user_id} → {second_init['user_id']}"
+        )
+        sessions = second_init.get("sessions", [])
+        session_ids = [s.get("session_id") for s in sessions]
+        assert created_session_id in session_ids, (
+            f"session created before disconnect was lost on reconnect; "
+            f"got: {session_ids!r}"
+        )
+    finally:
+        await client_b.disconnect()
