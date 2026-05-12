@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       service:
-        description: "Service to deploy ('all' = bring up every service from docker-compose.yml, picks up new services on first run)"
+        description: "Service to deploy ('all' = full bring-up; 'clean-infra' = remove stale infra/ dirs created by failed mounts; otherwise per-service)"
         required: true
         type: choice
         options:
@@ -16,6 +16,7 @@ on:
           - loki
           - promtail
           - grafana
+          - clean-infra
 
 jobs:
   deploy:
@@ -42,6 +43,16 @@ jobs:
               docker compose pull
               docker compose up -d --remove-orphans
               docker compose ps
+            elif [ "${{ inputs.service }}" = "clean-infra" ]; then
+              # Cleanup for the case where a previous deploy failed
+              # because Docker auto-created mount source paths as
+              # directories (e.g. infra/loki/config.yaml as a dir).
+              # Stops the affected services, drops the bad dirs, and
+              # exits — next "all" deploy will scp the real files.
+              docker compose stop loki promtail grafana 2>/dev/null || true
+              docker compose rm -f loki promtail grafana 2>/dev/null || true
+              sudo rm -rf infra
+              echo "infra/ cleaned. Re-run prepare-server (push any commit) then deploy 'all'."
             else
               # Per-service redeploy (no-deps avoids restarting db etc.)
               docker compose pull ${{ inputs.service }}
