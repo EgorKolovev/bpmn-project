@@ -4,14 +4,18 @@ on:
   workflow_dispatch:
     inputs:
       service:
-        description: "Service to deploy"
+        description: "Service to deploy ('all' = bring up every service from docker-compose.yml, picks up new services on first run)"
         required: true
         type: choice
         options:
+          - all
           - db
           - ml
           - backend
           - frontend
+          - loki
+          - promtail
+          - grafana
 
 jobs:
   deploy:
@@ -26,14 +30,21 @@ jobs:
           script: |
             cd /opt/bpmn-project
 
-            # Логин в registry (нужен для pull образов)
+            # Логин в registry (нужен для pull образов backend/ml/frontend)
             echo "${{ secrets.REGISTRY_PASSWORD }}" | \
               docker login registry.devfoundryteam.ru \
               -u "${{ secrets.REGISTRY_USERNAME }}" --password-stdin
 
-            # Скачать свежий образ и перезапустить только этот сервис
-            docker compose pull ${{ inputs.service }}
-            docker compose up -d --no-deps ${{ inputs.service }}
-
-            # Показать статус
-            docker compose ps ${{ inputs.service }}
+            if [ "${{ inputs.service }}" = "all" ]; then
+              # Full bring-up: picks up newly-added services (e.g.
+              # Loki / Promtail / Grafana on first run after they were
+              # added to docker-compose.yml).
+              docker compose pull
+              docker compose up -d --remove-orphans
+              docker compose ps
+            else
+              # Per-service redeploy (no-deps avoids restarting db etc.)
+              docker compose pull ${{ inputs.service }}
+              docker compose up -d --no-deps ${{ inputs.service }}
+              docker compose ps ${{ inputs.service }}
+            fi
