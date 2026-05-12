@@ -1,8 +1,10 @@
 import uuid
-from datetime import datetime, timezone
-from sqlalchemy import Column, String, Text, DateTime, ForeignKey, Integer
+from datetime import UTC, datetime
+
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
+
 from app.database import Base
 
 
@@ -13,8 +15,12 @@ class Session(Base):
     user_id = Column(UUID(as_uuid=True), nullable=False, index=True)
     name = Column(String(255), nullable=True)
     current_bpmn_xml = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
 
     messages = relationship("Message", back_populates="session", order_by="Message.order")
 
@@ -28,6 +34,6 @@ class Message(Base):
     text = Column(Text, nullable=True)
     bpmn_xml = Column(Text, nullable=True)
     order = Column(Integer, nullable=False)
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
 
     session = relationship("Session", back_populates="messages")

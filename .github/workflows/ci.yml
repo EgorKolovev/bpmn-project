@@ -7,19 +7,52 @@ on:
     branches: [main]
 
 jobs:
-  test-backend:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Install ruff
+        run: pip install ruff==0.8.4
+      - name: Ruff lint
+        run: ruff check .
+      - name: Ruff format check
+        run: ruff format --check .
+
+  test-backend:
+    needs: [lint]
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: bpmn
+          POSTGRES_PASSWORD: bpmn
+          POSTGRES_DB: bpmn
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Used by `tests/test_migrations.py` for the alembic round-trip.
+      TEST_PG_URL: "postgresql+asyncpg://bpmn:bpmn@localhost:5432/bpmn"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: Install dependencies
-        run: pip install -r backend/requirements.txt
+        run: pip install -r backend/requirements-dev.txt
       - name: Run tests
         run: pytest backend/tests/ -v
+        working-directory: ${{ github.workspace }}
 
   test-ml:
+    needs: [lint]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,11 +60,44 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install dependencies
-        run: pip install -r ml/requirements.txt
+        run: pip install -r ml/requirements-dev.txt
       - name: Run tests
         run: pytest ml/tests/ -v
 
+  test-ml-budget-pg:
+    # Re-runs `test_budget.py` against a real Postgres 16 to catch any
+    # dialect-specific bugs the SQLite-default test fixture would mask.
+    # BudgetTracker uses `Session.begin()` + `with_for_update()` on PG —
+    # this job is the only place that exercises that branch.
+    needs: [lint]
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: bpmn
+          POSTGRES_PASSWORD: bpmn
+          POSTGRES_DB: bpmn
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r ml/requirements-dev.txt psycopg2-binary
+      - name: Run budget tests against Postgres
+        env:
+          BUDGET_TEST_DB_URL: "postgresql+psycopg2://bpmn:bpmn@localhost:5432/bpmn"
+        run: pytest ml/tests/test_budget.py -v
+
   test-frontend:
+    needs: [lint]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

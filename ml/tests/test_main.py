@@ -1,17 +1,17 @@
-import json
 import os
+from unittest.mock import AsyncMock, patch
+
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
 from fastapi.testclient import TestClient
+
 from app.budget import DailyBudgetExceededError
 from app.llm import LLMClientError
 from tests.conftest import VALID_BPMN_XML
 
-
 os.environ["GEMINI_API_KEY"] = "test-key-for-unit-tests"
 
-from app.main import app
 import app.main as _main
+from app.main import app
 
 # Derive the API key the middleware will verify against; tests attach this
 # as a default header on TestClient so middleware passes.

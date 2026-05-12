@@ -24,16 +24,17 @@ the simpler behaviour the LLM produced. Front-end keeps its existing
 `bpmn-auto-layout` fallback for any edge case where this module bails
 out (returns input unchanged on parse error).
 """
+
 from __future__ import annotations
 
-import logging
 import re
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
-from typing import Optional
 from xml.etree import ElementTree as ET
 
-logger = logging.getLogger(__name__)
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 # --- Namespaces ---------------------------------------------------------------
 BPMN_NS = "http://www.omg.org/spec/BPMN/20100524/MODEL"
@@ -69,7 +70,7 @@ class FlowNode:
     id: str
     tag: str  # local tag — "task", "exclusiveGateway", "startEvent" …
     name: str = ""
-    lane_id: Optional[str] = None
+    lane_id: str | None = None
     width: int = W_TASK
     height: int = H_TASK
     x: int = 0
@@ -98,8 +99,13 @@ def _local(tag: str) -> str:
 
 
 def _shape_dims(tag: str) -> tuple[int, int]:
-    if tag in ("startEvent", "endEvent", "intermediateThrowEvent",
-               "intermediateCatchEvent", "boundaryEvent"):
+    if tag in (
+        "startEvent",
+        "endEvent",
+        "intermediateThrowEvent",
+        "intermediateCatchEvent",
+        "boundaryEvent",
+    ):
         return W_EVENT, H_EVENT
     if "Gateway" in tag or tag.endswith("gateway"):
         return W_GW, H_GW
@@ -120,8 +126,7 @@ def _parse_process(root: ET.Element) -> tuple[ET.Element, list[FlowNode], list[E
             lane_id = lane_elem.get("id") or f"Lane_{len(lanes)}"
             lane_name = lane_elem.get("name", "")
             node_ids = [
-                ref.text for ref in lane_elem.findall(f"{{{BPMN_NS}}}flowNodeRef")
-                if ref.text
+                ref.text for ref in lane_elem.findall(f"{{{BPMN_NS}}}flowNodeRef") if ref.text
             ]
             lanes.append(Lane(id=lane_id, name=lane_name, node_ids=list(node_ids)))
             for nid in node_ids:
@@ -130,13 +135,26 @@ def _parse_process(root: ET.Element) -> tuple[ET.Element, list[FlowNode], list[E
     nodes: list[FlowNode] = []
     edges: list[Edge] = []
     flow_node_tags = {
-        "startEvent", "endEvent", "intermediateThrowEvent",
-        "intermediateCatchEvent", "boundaryEvent",
-        "task", "userTask", "serviceTask", "scriptTask", "sendTask",
-        "receiveTask", "manualTask", "businessRuleTask", "callActivity",
+        "startEvent",
+        "endEvent",
+        "intermediateThrowEvent",
+        "intermediateCatchEvent",
+        "boundaryEvent",
+        "task",
+        "userTask",
+        "serviceTask",
+        "scriptTask",
+        "sendTask",
+        "receiveTask",
+        "manualTask",
+        "businessRuleTask",
+        "callActivity",
         "subProcess",
-        "exclusiveGateway", "inclusiveGateway", "parallelGateway",
-        "eventBasedGateway", "complexGateway",
+        "exclusiveGateway",
+        "inclusiveGateway",
+        "parallelGateway",
+        "eventBasedGateway",
+        "complexGateway",
     }
     for elem in list(process):
         tag = _local(elem.tag)
@@ -145,11 +163,16 @@ def _parse_process(root: ET.Element) -> tuple[ET.Element, list[FlowNode], list[E
             if not nid:
                 continue
             w, h = _shape_dims(tag)
-            nodes.append(FlowNode(
-                id=nid, tag=tag, name=elem.get("name", ""),
-                lane_id=lane_for_node.get(nid),
-                width=w, height=h,
-            ))
+            nodes.append(
+                FlowNode(
+                    id=nid,
+                    tag=tag,
+                    name=elem.get("name", ""),
+                    lane_id=lane_for_node.get(nid),
+                    width=w,
+                    height=h,
+                )
+            )
         elif tag == "sequenceFlow":
             sid = elem.get("id")
             src = elem.get("sourceRef")
@@ -181,9 +204,13 @@ def _assign_columns(nodes: list[FlowNode], edges: list[Edge]) -> dict[str, int]:
     WHITE, GRAY, BLACK = 0, 1, 2
     color: dict[str, int] = {}
     back_edges: set[tuple[str, str]] = set()
-    starts = [n.id for n in nodes if n.tag == "startEvent"] or [
-        n.id for n in nodes if not predecessors[n.id]
-    ] or [nodes[0].id] if nodes else []
+    starts = (
+        [n.id for n in nodes if n.tag == "startEvent"]
+        or [n.id for n in nodes if not predecessors[n.id]]
+        or [nodes[0].id]
+        if nodes
+        else []
+    )
 
     def dfs(start: str) -> None:
         stack: list[tuple[str, int]] = [(start, 0)]
@@ -259,7 +286,9 @@ def _layout(nodes: list[FlowNode], edges: list[Edge], lanes: list[Lane]) -> tupl
             if n_in_cell > max_subrows:
                 max_subrows = n_in_cell
         lane_subrows[lane.id] = max_subrows
-        lane.height = max(LANE_MIN_HEIGHT, max_subrows * SUB_ROW_HEIGHT + LANE_PAD_TOP + LANE_PAD_BOTTOM)
+        lane.height = max(
+            LANE_MIN_HEIGHT, max_subrows * SUB_ROW_HEIGHT + LANE_PAD_TOP + LANE_PAD_BOTTOM
+        )
 
     # Stack lanes top-to-bottom.
     cur_y = 0
@@ -318,20 +347,24 @@ def _build_sibling_indices(
     out_idx: dict[str, tuple[int, int]] = {}
     in_idx: dict[str, tuple[int, int]] = {}
 
-    for src_id, group in out_groups.items():
-        group.sort(key=lambda e: (
-            node_by_id[e.target].y if e.target in node_by_id else 0,
-            e.id,
-        ))
+    for _src_id, group in out_groups.items():
+        group.sort(
+            key=lambda e: (
+                node_by_id[e.target].y if e.target in node_by_id else 0,
+                e.id,
+            )
+        )
         n = len(group)
         for i, e in enumerate(group):
             out_idx[e.id] = (i, n)
 
-    for tgt_id, group in in_groups.items():
-        group.sort(key=lambda e: (
-            node_by_id[e.source].y if e.source in node_by_id else 0,
-            e.id,
-        ))
+    for _tgt_id, group in in_groups.items():
+        group.sort(
+            key=lambda e: (
+                node_by_id[e.source].y if e.source in node_by_id else 0,
+                e.id,
+            )
+        )
         n = len(group)
         for i, e in enumerate(group):
             in_idx[e.id] = (i, n)
@@ -388,11 +421,10 @@ def _route_edge(
     source. `in_sib = (i, n)` — same for target arrivals.
     """
     sx_left, sx_right = src.x, src.x + src.width
-    sy_top, sy_bottom = src.y, src.y + src.height
+    sy_bottom = src.y + src.height
     sy = src.y + src.height // 2
     tx_left = tgt.x
     tx_right = tgt.x + tgt.width
-    ty_top = tgt.y
     ty_bottom = tgt.y + tgt.height
     ty = tgt.y + tgt.height // 2
 
@@ -490,8 +522,7 @@ def _build_di(
             ET.SubElement(
                 shape,
                 f"{{{DC_NS}}}Bounds",
-                {"x": "0", "y": str(lane.y),
-                 "width": str(total_w), "height": str(lane.height)},
+                {"x": "0", "y": str(lane.y), "width": str(total_w), "height": str(lane.height)},
             )
 
     # Flow node shapes.
@@ -504,8 +535,7 @@ def _build_di(
         ET.SubElement(
             shape,
             f"{{{DC_NS}}}Bounds",
-            {"x": str(n.x), "y": str(n.y),
-             "width": str(n.width), "height": str(n.height)},
+            {"x": str(n.x), "y": str(n.y), "width": str(n.width), "height": str(n.height)},
         )
 
     # Pre-compute sibling indices so parallel edges fan out instead of

@@ -1,0 +1,5 @@
+# Mechanical reformats — ignore in `git blame`.
+# Configure local clones with:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+fca0818452afeb7a279a6e97e974152c8be559f2  # style: apply ruff format and ruff check --fix

@@ -1,0 +1,43 @@
+# Root tooling config for the BPMN monorepo (backend + ml Python services).
+# Frontend is governed by frontend/package.json + ESLint and is excluded here.
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = [
+    "frontend",
+    "ansible",
+    "benchmarking_files",
+    "node_modules",
+    "backend/alembic/versions",  # Generated alembic revisions
+    "**/.venv",
+]
+
+[tool.ruff.lint]
+# Reasonable default rule set, intentionally conservative:
+#   E, W  — pycodestyle errors / warnings
+#   F     — pyflakes (unused imports, undefined names)
+#   I     — isort import ordering
+#   B     — flake8-bugbear (likely bugs)
+#   C4    — flake8-comprehensions
+#   UP    — pyupgrade (py3.12 idioms)
+select = ["E", "W", "F", "I", "B", "C4", "UP"]
+# E501 is handled by `ruff format`, not lint.
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app", "tests"]
+combine-as-imports = true
+
+[tool.ruff.lint.per-file-ignores]
+# Tests may declare unused fixtures via parameter names.
+"**/tests/**" = ["B008"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true
+
+[tool.pytest.ini_options]
+# Pytest config lives in backend/pytest.ini and ml/pytest.ini for now —
+# this section is reserved for future repo-wide overrides.

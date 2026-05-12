@@ -14,6 +14,7 @@ Two test layers live in this module:
     `socket.io` and yields a tiny helper that lets tests await a
     specific server-sent action by name.
 """
+
 import asyncio
 import os
 from types import SimpleNamespace
@@ -23,7 +24,6 @@ import httpx
 import pytest
 import pytest_asyncio
 import socketio  # python-socketio client
-
 
 # Override DATABASE_URL at import time so any later `from app.config
 # import DATABASE_URL` picks up the test value.
@@ -120,10 +120,10 @@ class _MockMLClient:
     def set(self, handlers: dict[str, Any]) -> None:
         """Replace the response map. Values may be:
 
-          * dict / list  — returned as 200 OK JSON
-          * (status, body) tuple — explicit status + JSON body
-          * callable(request) -> httpx.Response — full control
-          * Exception instance — re-raised (simulates network error)
+        * dict / list  — returned as 200 OK JSON
+        * (status, body) tuple — explicit status + JSON body
+        * callable(request) -> httpx.Response — full control
+        * Exception instance — re-raised (simulates network error)
         """
         self._handlers = dict(handlers)
 
@@ -216,17 +216,15 @@ class SocketConversation:
             remaining = deadline - asyncio.get_event_loop().time()
             if remaining <= 0:
                 raise AssertionError(
-                    f"Timeout waiting for action={action!r}; "
-                    f"events seen: {self.events}"
+                    f"Timeout waiting for action={action!r}; " f"events seen: {self.events}"
                 )
             self._received.clear()
             try:
                 await asyncio.wait_for(self._received.wait(), timeout=remaining)
-            except asyncio.TimeoutError:
+            except TimeoutError as exc:
                 raise AssertionError(
-                    f"Timeout waiting for action={action!r}; "
-                    f"events seen: {self.events}"
-                )
+                    f"Timeout waiting for action={action!r}; events seen: {self.events}"
+                ) from exc
 
 
 @pytest.fixture
@@ -242,12 +240,10 @@ async def socketio_conversation(backend_url):
     """
     sio = socketio.AsyncClient(reconnection=False)
     convo = SocketConversation(sio)
-    await sio.connect(backend_url, socketio_path="/socket.io")
+    await sio.connect(backend_url, socketio_path="/ws")
     try:
         await convo.send({"action": "init"})
-        init = await convo.wait_for_action(
-            "init_data", timeout=TIMEOUTS.SOCKETIO_INIT
-        )
+        init = await convo.wait_for_action("init_data", timeout=TIMEOUTS.SOCKETIO_INIT)
         assert "user_id" in init, f"missing user_id in init_data: {init}"
         yield convo
     finally:

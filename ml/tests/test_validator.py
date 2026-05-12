@@ -1,5 +1,4 @@
-import pytest
-from app.validator import validate_bpmn_xml, get_bpmn_warnings
+from app.validator import get_bpmn_warnings, validate_bpmn_xml
 from tests.conftest import VALID_BPMN_XML
 
 

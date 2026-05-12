@@ -7,7 +7,7 @@ responses. They don't exercise the LLM — just the endpoint plumbing.
 If these fail, there's a transport / serialization bug (unrelated to prompt
 quality). They always run fast and have no external dependencies.
 """
-import json
+
 import os
 from unittest.mock import AsyncMock, patch
 
@@ -16,11 +16,10 @@ from fastapi.testclient import TestClient
 
 from tests.conftest import VALID_BPMN_XML_NO_DI, cyrillic_ratio
 
-
 os.environ.setdefault("GEMINI_API_KEY", "test-key-for-unit-tests")
 
-from app.main import app  # noqa: E402
 import app.main as _main  # noqa: E402
+from app.main import app  # noqa: E402
 
 # Derive the API key the middleware will verify against; tests attach this
 # as a default header on TestClient so middleware passes.

@@ -15,6 +15,7 @@ Covers:
 
 Pure unit tests: no LLM, no Docker, no network.
 """
+
 from __future__ import annotations
 
 import os
@@ -24,13 +25,7 @@ os.environ.setdefault("GEMINI_API_KEY", "test-key-for-unit-tests")
 
 import xml.etree.ElementTree as ET
 
-import pytest
-
 from app.bpmn_layout import (
-    BPMN_NS,
-    BPMNDI_NS,
-    DC_NS,
-    DI_NS,
     has_layout,
     layout_bpmn,
 )
@@ -165,13 +160,12 @@ class TestThreeLanesWithCycle:
         out = layout_bpmn(THREE_LANES_WITH_CYCLE)
         edge_match = re.search(
             r'<bpmndi:BPMNEdge[^>]+bpmnElement="F5"[^>]*>(.*?)</bpmndi:BPMNEdge>',
-            out, re.DOTALL,
+            out,
+            re.DOTALL,
         )
         assert edge_match, "no edge for F5"
         n_waypoints = len(re.findall(r"<di:waypoint", edge_match.group(1)))
-        assert n_waypoints == 4, (
-            f"expected 4 waypoints on back-edge F5 (U-bend), got {n_waypoints}"
-        )
+        assert n_waypoints == 4, f"expected 4 waypoints on back-edge F5 (U-bend), got {n_waypoints}"
 
     def test_lanes_stacked_vertically(self):
         """Each lane Y must be greater than the previous (top to bottom)."""
@@ -204,9 +198,9 @@ class TestThreeLanesWithCycle:
         )
         assert node_m
         node_y = int(node_m.group(1))
-        assert lane_y <= node_y <= lane_y + lane_h, (
-            f"Task_Submit y={node_y} not inside Lane_Manager [{lane_y}, {lane_y+lane_h}]"
-        )
+        assert (
+            lane_y <= node_y <= lane_y + lane_h
+        ), f"Task_Submit y={node_y} not inside Lane_Manager [{lane_y}, {lane_y+lane_h}]"
 
     def test_xml_parses_after_layout(self):
         """Output must be well-formed XML that bpmn-js can ingest."""
@@ -283,7 +277,8 @@ class TestSiblingSpread:
         for eid in edge_ids:
             edge_match = re.search(
                 rf'<bpmndi:BPMNEdge[^>]+bpmnElement="{eid}"[^>]*>(.*?)</bpmndi:BPMNEdge>',
-                xml, re.DOTALL,
+                xml,
+                re.DOTALL,
             )
             assert edge_match, f"no edge for {eid}"
             wps = re.findall(r'<di:waypoint[^>]+x="(\d+)"[^>]+y="(\d+)"', edge_match.group(1))
@@ -298,18 +293,14 @@ class TestSiblingSpread:
         """
         out = layout_bpmn(self.THREE_BRANCHES)
         bends = self._bend_xs(out, ["F2", "F3", "F4"])
-        assert len(set(bends)) == 3, (
-            f"expected 3 distinct bend xs, got {bends}"
-        )
+        assert len(set(bends)) == 3, f"expected 3 distinct bend xs, got {bends}"
 
     def test_three_merges_have_distinct_bends(self):
         """F5, F6, F7 all arrive at GW_Merge. Their second waypoint
         (where each one bends to enter the merge) must be distinct."""
         out = layout_bpmn(self.THREE_BRANCHES)
         bends = self._bend_xs(out, ["F5", "F6", "F7"])
-        assert len(set(bends)) == 3, (
-            f"expected 3 distinct merge bends, got {bends}"
-        )
+        assert len(set(bends)) == 3, f"expected 3 distinct merge bends, got {bends}"
 
     def test_single_outgoing_edge_unaffected(self):
         """A node with exactly one outgoing edge must NOT pay the

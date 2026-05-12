@@ -36,7 +36,6 @@ is now covered by the mocked integration layer:
 Run with `RUN_E2E=1 pytest ml/tests/test_e2e.py -v`. The tests
 skip otherwise and the suite passes instantly.
 """
-import pytest
 
 from tests.conftest import (
     E2E_MARKERS,
@@ -48,13 +47,12 @@ from tests.conftest import (
     _edit,
     _generate,
     all_flow_nodes_in_lanes,
+    count_exclusive_gateways,
     cyrillic_ratio,
     extract_flow_node_names,
     extract_lanes,
     has_cycle,
-    count_exclusive_gateways,
 )
-
 
 pytestmark = E2E_MARKERS
 
@@ -101,9 +99,9 @@ async def test_russian_generate_simple(ml_client):
     assert not offenders, f"non-Russian names: {offenders!r}"
 
     # Session name follows the input language too.
-    assert cyrillic_ratio(result["session_name"]) >= 0.5, (
-        f"session_name not Russian: {result['session_name']!r}"
-    )
+    assert (
+        cyrillic_ratio(result["session_name"]) >= 0.5
+    ), f"session_name not Russian: {result['session_name']!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -154,9 +152,9 @@ async def test_russian_edit_language_preserved(ml_client):
     offenders = [n for n in names if cyrillic_ratio(n) < 0.5]
     # Allow at most one non-Cyrillic stray (e.g. the LLM kept some
     # English from the instruction): main body must stay Russian.
-    assert len(offenders) <= 1, (
-        f"too many non-Russian names after Russian → English edit: {offenders!r}"
-    )
+    assert (
+        len(offenders) <= 1
+    ), f"too many non-Russian names after Russian → English edit: {offenders!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +195,6 @@ async def test_english_smoke(ml_client):
     # Most names should be non-Cyrillic. Empty `cyrillic_ratio` returns
     # 0 for pure Latin → tolerate up to 0.1 to allow stray characters.
     cyrillic_offenders = [n for n in names if cyrillic_ratio(n) > 0.1]
-    assert not cyrillic_offenders, (
-        f"English request produced Russian labels: {cyrillic_offenders!r}"
-    )
+    assert (
+        not cyrillic_offenders
+    ), f"English request produced Russian labels: {cyrillic_offenders!r}"

@@ -1,21 +1,64 @@
+"""BudgetTracker tests — run against SQLite by default, or against the
+URL in `BUDGET_TEST_DB_URL` (used by the CI `test-ml-budget-pg` job
+to exercise the Postgres `SELECT ... FOR UPDATE` branch).
+"""
+
 import asyncio
+import os
 import threading
+import uuid
 
 import pytest
 
 from app.budget import BudgetTracker, DailyBudgetExceededError
 
 
-class TestBudgetTracker:
-    def test_reserve_finalize_and_release(self, tmp_path):
-        tracker = BudgetTracker(
-            db_path=str(tmp_path / "usage.sqlite3"),
-            daily_limit_usd=5.0,
+def _tracker(tmp_path, daily_limit_usd: float = 5.0) -> BudgetTracker:
+    """Build a BudgetTracker against either SQLite (default) or the
+    URL given in `BUDGET_TEST_DB_URL`.
+
+    The Postgres path uses a per-test random `search_path` so concurrent
+    test runs don't clobber each other's `daily_usage` rows.
+    """
+    pg_url = os.environ.get("BUDGET_TEST_DB_URL")
+    if pg_url:
+        # Each test gets a fresh schema in the same PG instance.
+        schema = f"budget_test_{uuid.uuid4().hex[:12]}"
+        url_with_schema = (
+            f"{pg_url}?options=-c%20search_path%3D{schema}"
+            if "?" not in pg_url
+            else f"{pg_url}&options=-c%20search_path%3D{schema}"
+        )
+        # Create the schema first via a bare psycopg2 connection.
+        from sqlalchemy import create_engine, text
+
+        bootstrap = create_engine(pg_url, future=True)
+        with bootstrap.begin() as conn:
+            conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
+        bootstrap.dispose()
+        return BudgetTracker(
+            db_url=url_with_schema,
+            daily_limit_usd=daily_limit_usd,
             input_price_per_million_usd=0.25,
             output_price_per_million_usd=1.50,
             max_output_tokens=8192,
             timezone_name="UTC",
         )
+
+    # Default: SQLite file under tmp_path.
+    return BudgetTracker(
+        db_path=str(tmp_path / "usage.sqlite3"),
+        daily_limit_usd=daily_limit_usd,
+        input_price_per_million_usd=0.25,
+        output_price_per_million_usd=1.50,
+        max_output_tokens=8192,
+        timezone_name="UTC",
+    )
+
+
+class TestBudgetTracker:
+    def test_reserve_finalize_and_release(self, tmp_path):
+        tracker = _tracker(tmp_path)
 
         reservation = tracker.reserve_for_call(prompt_tokens=1000)
         actual_cost = tracker.finalize_call(
@@ -30,14 +73,7 @@ class TestBudgetTracker:
         tracker.release_reservation(second)
 
     def test_rejects_when_daily_limit_would_be_exceeded(self, tmp_path):
-        tracker = BudgetTracker(
-            db_path=str(tmp_path / "usage.sqlite3"),
-            daily_limit_usd=0.01,
-            input_price_per_million_usd=0.25,
-            output_price_per_million_usd=1.50,
-            max_output_tokens=8192,
-            timezone_name="UTC",
-        )
+        tracker = _tracker(tmp_path, daily_limit_usd=0.01)
 
         try:
             tracker.reserve_for_call(prompt_tokens=1)
@@ -48,28 +84,19 @@ class TestBudgetTracker:
 
 
 class TestBudgetTrackerConcurrency:
-    """`BudgetTracker` is the single throttle our ml service uses to
-    cap LLM spend per day. SQLite under multiple concurrent writers is
-    the classic place to hit subtle locking / lost-update bugs, so
-    these tests hammer it from many tasks at once.
-    """
+    """`BudgetTracker` is the single throttle the ml service uses to
+    cap LLM spend per day. Concurrent writers are the classic place to
+    hit subtle locking / lost-update bugs, so these tests hammer it
+    from many tasks at once. The same tests run on:
 
-    def _make_tracker(self, tmp_path, daily_limit_usd=100.0):
-        return BudgetTracker(
-            db_path=str(tmp_path / "usage.sqlite3"),
-            daily_limit_usd=daily_limit_usd,
-            input_price_per_million_usd=0.25,
-            output_price_per_million_usd=1.50,
-            max_output_tokens=8192,
-            timezone_name="UTC",
-        )
+      * SQLite (default) — `BEGIN IMMEDIATE` via SQLAlchemy event hook.
+      * Postgres (CI `test-ml-budget-pg`) — `SELECT ... FOR UPDATE`.
+    """
 
     def test_concurrent_reservations_no_deadlock(self, tmp_path):
         """20 threads each reserving + finalizing should all complete
-        without deadlock or sqlite-lock timeouts. Verifies the
-        threading.Lock + BEGIN IMMEDIATE wrapping serializes writes
-        correctly."""
-        tracker = self._make_tracker(tmp_path)
+        without deadlock or DB-lock timeouts."""
+        tracker = _tracker(tmp_path, daily_limit_usd=100.0)
         N = 20
 
         errors: list[Exception] = []
@@ -77,9 +104,7 @@ class TestBudgetTrackerConcurrency:
         def worker():
             try:
                 reservation = tracker.reserve_for_call(prompt_tokens=100)
-                tracker.finalize_call(
-                    reservation=reservation, prompt_tokens=100, output_tokens=200
-                )
+                tracker.finalize_call(reservation=reservation, prompt_tokens=100, output_tokens=200)
             except Exception as exc:  # noqa: BLE001
                 errors.append(exc)
 
@@ -93,14 +118,13 @@ class TestBudgetTrackerConcurrency:
         assert errors == [], f"unexpected errors: {errors!r}"
 
     def test_concurrent_reservations_respect_daily_cap(self, tmp_path):
-        """With a daily cap of $0.10 and call cost ~$0.012 (8 K output
-        tokens × $1.50/1M = $0.0123), about 8 reservations should succeed
-        and the rest should raise DailyBudgetExceededError.
+        """With a daily cap of $0.10 and call cost ~$0.012 (8K output
+        tokens × $1.50/1M = $0.0123), ~8 reservations should succeed
+        and the rest must raise DailyBudgetExceededError.
 
-        Validates that no two reservations can squeeze past the cap
-        thanks to BEGIN IMMEDIATE.
+        Validates that no two reservations can squeeze past the cap.
         """
-        tracker = self._make_tracker(tmp_path, daily_limit_usd=0.10)
+        tracker = _tracker(tmp_path, daily_limit_usd=0.10)
         N = 30
         approved: list[bool] = []
         lock = threading.Lock()
@@ -123,21 +147,17 @@ class TestBudgetTrackerConcurrency:
         approved_count = sum(approved)
         rejected_count = len(approved) - approved_count
         assert approved_count + rejected_count == N
-        # Some should be approved, some should be rejected.
-        # The exact number depends on cost-per-call vs cap.
         assert approved_count > 0, "no reservation succeeded"
-        assert rejected_count > 0, (
-            f"cap not enforced — all {N} reservations approved despite "
-            f"$0.10 cap"
-        )
+        assert (
+            rejected_count > 0
+        ), f"cap not enforced — all {N} reservations approved despite $0.10 cap"
 
     def test_release_after_reserve_returns_budget_to_cap(self, tmp_path):
-        """A reservation that's released should free up its share of the
-        cap for subsequent calls. We reserve until the cap rejects us,
-        release one, then confirm a fresh reservation now succeeds."""
-        tracker = self._make_tracker(tmp_path, daily_limit_usd=0.10)
+        """A released reservation should free its share of the cap for
+        subsequent calls. Drain the cap, release one, confirm fresh
+        reservation succeeds."""
+        tracker = _tracker(tmp_path, daily_limit_usd=0.10)
 
-        # Drain the budget. ~8 reservations fit at this size.
         held_reservations = []
         while True:
             try:
@@ -149,16 +169,13 @@ class TestBudgetTrackerConcurrency:
 
         assert len(held_reservations) >= 1, "cap rejected the very first reservation"
 
-        # Sanity: the next one really is rejected.
         with pytest.raises(DailyBudgetExceededError):
             tracker.reserve_for_call(prompt_tokens=100)
 
-        # Release one — there should now be room for exactly one more.
         tracker.release_reservation(held_reservations[0])
         new_reservation = tracker.reserve_for_call(prompt_tokens=100)
         assert new_reservation is not None
 
-        # Tidy up.
         tracker.release_reservation(new_reservation)
         for r in held_reservations[1:]:
             tracker.release_reservation(r)
@@ -166,19 +183,14 @@ class TestBudgetTrackerConcurrency:
     @pytest.mark.asyncio
     async def test_async_concurrent_reservations(self, tmp_path):
         """Same hammer test but via asyncio + run_in_executor — matches
-        the way `LLMClient._call_llm` actually uses the tracker
-        (called from inside an async coroutine)."""
-        tracker = self._make_tracker(tmp_path)
+        how `LLMClient._call_llm` uses the tracker from a coroutine."""
+        tracker = _tracker(tmp_path, daily_limit_usd=100.0)
         N = 20
 
         async def one():
             loop = asyncio.get_event_loop()
-            reservation = await loop.run_in_executor(
-                None, tracker.reserve_for_call, 100
-            )
-            await loop.run_in_executor(
-                None, tracker.finalize_call, reservation, 100, 200
-            )
+            reservation = await loop.run_in_executor(None, tracker.reserve_for_call, 100)
+            await loop.run_in_executor(None, tracker.finalize_call, reservation, 100, 200)
             return True
 
         results = await asyncio.gather(*(one() for _ in range(N)))
