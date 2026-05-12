@@ -1,0 +1,15 @@
+# Auto-provisions Loki as the default datasource on first Grafana boot.
+# Grafana reads this once at startup; subsequent changes via UI override.
+
+apiVersion: 1
+
+datasources:
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    isDefault: true
+    editable: true
+    version: 1
+    jsonData:
+      maxLines: 1000

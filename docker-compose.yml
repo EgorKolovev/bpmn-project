@@ -20,6 +20,8 @@ services:
       - INTERNAL_API_KEY=${INTERNAL_API_KEY}
       - MAX_MESSAGE_CHARS=${MAX_MESSAGE_CHARS:-20000}
       - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-}
+      - LOG_FORMAT=${LOG_FORMAT:-json}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
     depends_on:
       db:
         condition: service_healthy
@@ -27,6 +29,9 @@ services:
         condition: service_started
     volumes:
       - backend_data:/data
+    labels:
+      - "logging=promtail"
+      - "logging_jobname=bpmn-backend"
     restart: unless-stopped
 
   ml:
@@ -47,8 +52,13 @@ services:
       - DAILY_SPEND_LIMIT_USD=${DAILY_SPEND_LIMIT_USD:-5.0}
       - USAGE_DB_PATH=/data/usage.sqlite3
       - INTERNAL_API_KEY=${INTERNAL_API_KEY}
+      - LOG_FORMAT=${LOG_FORMAT:-json}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
       - ml_data:/data
+    labels:
+      - "logging=promtail"
+      - "logging_jobname=bpmn-ml"
     restart: unless-stopped
 
   db:
@@ -65,7 +75,51 @@ services:
       timeout: 5s
       retries: 5
 
+  # --- Observability stack ------------------------------------------------
+  # Loki holds the indexed logs, Promtail scrapes docker stdout for
+  # services labelled `logging=promtail`, Grafana exposes a dashboard +
+  # ad-hoc LogQL queries. Use the GRAFANA_ADMIN_PASSWORD env on first
+  # start; password change is sticky after that.
+
+  loki:
+    image: grafana/loki:3.3.0
+    expose:
+      - "3100"
+    volumes:
+      - ./infra/loki/config.yaml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    restart: unless-stopped
+
+  promtail:
+    image: grafana/promtail:3.3.0
+    volumes:
+      - ./infra/promtail/config.yaml:/etc/promtail/config.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    command: -config.file=/etc/promtail/config.yaml
+    depends_on:
+      - loki
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+    volumes:
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - loki
+    restart: unless-stopped
+
 volumes:
   backend_data:
   ml_data:
   pgdata:
+  loki_data:
+  grafana_data:

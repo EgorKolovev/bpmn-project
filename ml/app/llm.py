@@ -1,9 +1,9 @@
 import json
-import logging
 import re
 from typing import Any
 
 import httpx
+import structlog
 
 from app.bpmn_fix import (
     ensure_incoming_outgoing,
@@ -36,7 +36,7 @@ def _map_budget_to_effort(budget: int) -> str | None:
     return "high"
 
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 

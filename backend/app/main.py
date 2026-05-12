@@ -9,11 +9,11 @@ that's the seam tests rely on (every existing
 `monkeypatch.setattr(backend_main, "sio", fake)` keeps working).
 """
 
-import logging
 from contextlib import asynccontextmanager
 
 import httpx
 import socketio
+import structlog
 from aiolimiter import AsyncLimiter
 from fastapi import FastAPI
 
@@ -29,10 +29,11 @@ from app.config import (
 # `_m.async_session` at call time and tests can `monkeypatch.setattr(
 # backend_main, "async_session", ...)` to swap it for a failing factory.
 from app.database import async_session, init_db  # noqa: F401  (re-export)
+from app.logging import configure_logging
 from app.security import load_or_create_session_secret
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+configure_logging()
+logger = structlog.get_logger(__name__)
 
 ml_http_client: httpx.AsyncClient | None = None
 session_signing_secret: str | None = None

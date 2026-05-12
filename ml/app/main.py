@@ -1,7 +1,7 @@
-import logging
 import os
 from contextlib import asynccontextmanager
 
+import structlog
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
@@ -23,9 +23,10 @@ from app.config import (
     get_output_price_per_million_usd,
 )
 from app.llm import GeminiBackend, LLMClient, LLMClientError, PolzaBackend
+from app.logging import configure_logging
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+configure_logging()
+logger = structlog.get_logger(__name__)
 
 llm_client: LLMClient = None
 INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY", "")

@@ -4,16 +4,16 @@ child elements on every flow node. This is required by bpmn-auto-layout
 to traverse the graph and generate correct edge waypoints.
 """
 
-import logging
 import re
 import xml.etree.ElementTree as XmlET
 from typing import Any
 
+import structlog
 from defusedxml import ElementTree as SafeET
 
 from app.bpmn_constants import BPMN_NS, NON_FLOW_NODE_TAGS
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 def _append_flow_refs(

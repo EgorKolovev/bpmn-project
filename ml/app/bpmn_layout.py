@@ -27,13 +27,14 @@ out (returns input unchanged on parse error).
 
 from __future__ import annotations
 
-import logging
 import re
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from xml.etree import ElementTree as ET
 
-logger = logging.getLogger(__name__)
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 # --- Namespaces ---------------------------------------------------------------
 BPMN_NS = "http://www.omg.org/spec/BPMN/20100524/MODEL"

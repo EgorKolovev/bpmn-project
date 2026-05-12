@@ -11,18 +11,18 @@ Constants like `RATE_LIMIT_*` and `MAX_SESSIONS_PER_USER` come from
 without rebinding.
 """
 
-import logging
 import uuid
 from typing import Any
 
 import httpx
+import structlog
 
 from app import main as _m
 from app.config import MAX_MESSAGE_CHARS
 from app.repositories import MessageRepository, SessionRepository
 from app.security import issue_session_token, verify_session_token
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class ClientInputError(Exception):
