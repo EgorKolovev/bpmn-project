@@ -1,12 +1,12 @@
 import os
 
 import pytest
-from fastapi.testclient import TestClient
+from starlette.testclient import TestClient
 
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///./test_backend.db"
 os.environ["ML_SERVICE_URL"] = "http://localhost:8001"
 
-from app.main import app
+from app.main import app  # noqa: E402
 
 
 @pytest.fixture
