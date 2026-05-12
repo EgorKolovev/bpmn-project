@@ -3,7 +3,7 @@ import time
 import uuid
 from collections import defaultdict
 from contextlib import asynccontextmanager
-from typing import Any, Dict, Optional
+from typing import Any
 
 import httpx
 import socketio
@@ -30,11 +30,11 @@ from app.security import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-ml_http_client: Optional[httpx.AsyncClient] = None
-session_signing_secret: Optional[str] = None
+ml_http_client: httpx.AsyncClient | None = None
+session_signing_secret: str | None = None
 
 # Rate limiting: track timestamps per SID
-_rate_limit_map: Dict[str, list] = defaultdict(list)
+_rate_limit_map: dict[str, list] = defaultdict(list)
 RATE_LIMIT_WINDOW = 10  # seconds
 RATE_LIMIT_MAX = 5  # max messages per window
 
@@ -163,7 +163,7 @@ def _parse_uuid(value: Any, field_name: str) -> uuid.UUID:
         raise ClientInputError(f"Invalid {field_name}.") from exc
 
 
-def _try_parse_uuid(value: Any) -> Optional[uuid.UUID]:
+def _try_parse_uuid(value: Any) -> uuid.UUID | None:
     if value in (None, ""):
         return None
     try:
@@ -186,7 +186,7 @@ def _normalize_message_text(value: Any) -> str:
 
 async def _resolve_user_identity(
     sid: str,
-    data: Dict[str, Any],
+    data: dict[str, Any],
 ) -> tuple[uuid.UUID, str]:
     global session_signing_secret
 
@@ -250,8 +250,7 @@ async def handle_init(sid, data):
         sessions = result.scalars().all()
 
     sessions_list = [
-        {"session_id": str(session.id), "name": session.name or "Untitled"}
-        for session in sessions
+        {"session_id": str(session.id), "name": session.name or "Untitled"} for session in sessions
     ]
 
     await sio.emit(

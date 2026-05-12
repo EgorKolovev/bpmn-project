@@ -1,14 +1,24 @@
 import json
-import re
 import logging
-import httpx
-from typing import Any, Dict, Optional
+import re
+from typing import Any
 
+import httpx
+
+from app.bpmn_fix import (
+    ensure_incoming_outgoing,
+    ensure_lane_refs,
+    fix_missing_namespace_declarations,
+    strip_bpmn_diagram,
+)
+from app.bpmn_layout import layout_bpmn
 from app.budget import BudgetTracker, DailyBudgetExceededError, format_usd_from_nanodollars
 from app.config import GEMINI_THINKING_BUDGET, MAX_OUTPUT_TOKENS
+from app.prompts import SYSTEM_PROMPT_CLASSIFY, SYSTEM_PROMPT_EDIT, SYSTEM_PROMPT_GENERATE
+from app.validator import get_bpmn_warnings, validate_bpmn_xml
 
 
-def _map_budget_to_effort(budget: int) -> Optional[str]:
+def _map_budget_to_effort(budget: int) -> str | None:
     """Map Gemini-native `thinkingBudget` (token count) to OpenAI-style
     `reasoning.effort` enum used by Polza.
 
@@ -24,15 +34,7 @@ def _map_budget_to_effort(budget: int) -> Optional[str]:
     if budget <= 5000:
         return "medium"
     return "high"
-from app.prompts import SYSTEM_PROMPT_CLASSIFY, SYSTEM_PROMPT_GENERATE, SYSTEM_PROMPT_EDIT
-from app.validator import validate_bpmn_xml, get_bpmn_warnings
-from app.bpmn_fix import (
-    ensure_incoming_outgoing,
-    ensure_lane_refs,
-    fix_missing_namespace_declarations,
-    strip_bpmn_diagram,
-)
-from app.bpmn_layout import layout_bpmn
+
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +47,7 @@ GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 # produce double-escaped payloads on long XML outputs — Gemini would wrap
 # the whole response in an extra layer of string quoting, breaking parse.
 # With an explicit schema the model is constrained to emit a real object.
-GENERATE_RESPONSE_SCHEMA: Dict[str, Any] = {
+GENERATE_RESPONSE_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "bpmn_xml": {
@@ -61,7 +63,7 @@ GENERATE_RESPONSE_SCHEMA: Dict[str, Any] = {
     "propertyOrdering": ["bpmn_xml", "session_name"],
 }
 
-EDIT_RESPONSE_SCHEMA: Dict[str, Any] = {
+EDIT_RESPONSE_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "bpmn_xml": {
@@ -72,7 +74,7 @@ EDIT_RESPONSE_SCHEMA: Dict[str, Any] = {
     "required": ["bpmn_xml"],
 }
 
-CLASSIFY_RESPONSE_SCHEMA: Dict[str, Any] = {
+CLASSIFY_RESPONSE_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "is_valid": {"type": "boolean"},
@@ -151,9 +153,9 @@ class GeminiBackend:
         self,
         system_prompt: str,
         user_prompt: str,
-        response_schema: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        generation_config: Dict[str, Any] = {
+        response_schema: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        generation_config: dict[str, Any] = {
             "temperature": 0.2,
             "maxOutputTokens": self.max_output_tokens,
             "responseMimeType": "application/json",
@@ -173,9 +175,7 @@ class GeminiBackend:
                     "parts": [{"text": user_prompt}],
                 }
             ],
-            "systemInstruction": {
-                "parts": [{"text": system_prompt}]
-            },
+            "systemInstruction": {"parts": [{"text": system_prompt}]},
             "generationConfig": generation_config,
         }
 
@@ -183,7 +183,7 @@ class GeminiBackend:
         self,
         system_prompt: str,
         user_prompt: str,
-        response_schema: Optional[Dict[str, Any]] = None,
+        response_schema: dict[str, Any] | None = None,
     ) -> int:
         payload = self._build_payload(system_prompt, user_prompt, response_schema)
         # countTokens requires `model` inside the nested generate_content_request
@@ -208,7 +208,7 @@ class GeminiBackend:
         self,
         system_prompt: str,
         user_prompt: str,
-        response_schema: Optional[Dict[str, Any]] = None,
+        response_schema: dict[str, Any] | None = None,
     ) -> tuple[str, int, int]:
         """Returns (text, prompt_tokens, output_tokens)."""
         payload = self._build_payload(system_prompt, user_prompt, response_schema)
@@ -238,15 +238,13 @@ class GeminiBackend:
         if not parts:
             usage = data.get("usageMetadata", {})
             raise LLMClientError(
-                f"Gemini returned empty content (finishReason={finish_reason}, "
-                f"usage={usage})."
+                f"Gemini returned empty content (finishReason={finish_reason}, " f"usage={usage})."
             )
         text = parts[0].get("text", "")
         if not text:
             usage = data.get("usageMetadata", {})
             raise LLMClientError(
-                f"Gemini returned empty text (finishReason={finish_reason}, "
-                f"usage={usage})."
+                f"Gemini returned empty text (finishReason={finish_reason}, " f"usage={usage})."
             )
         usage = data.get("usageMetadata", {})
         prompt_tokens = int(usage.get("promptTokenCount", 0))
@@ -262,7 +260,9 @@ class GeminiBackend:
         if status_code in (401, 403):
             return LLMClientError("Gemini API authentication failed.")
         if status_code == 429:
-            return LLMClientError("Gemini API rate limit reached. Try again shortly.", status_code=503)
+            return LLMClientError(
+                "Gemini API rate limit reached. Try again shortly.", status_code=503
+            )
         return LLMClientError("Gemini API request failed.")
 
     async def close(self):
@@ -290,7 +290,7 @@ class PolzaBackend:
         self,
         system_prompt: str,
         user_prompt: str,
-        response_schema: Optional[Dict[str, Any]] = None,
+        response_schema: dict[str, Any] | None = None,
     ) -> int:
         # Polza doesn't have a separate count endpoint; estimate from char count
         # ~4 chars per token is a rough estimate
@@ -301,7 +301,7 @@ class PolzaBackend:
         self,
         system_prompt: str,
         user_prompt: str,
-        response_schema: Optional[Dict[str, Any]] = None,
+        response_schema: dict[str, Any] | None = None,
     ) -> tuple[str, int, int]:
         """Returns (text, prompt_tokens, output_tokens)."""
         # OpenAI-compatible strict-schema mode via response_format=json_schema.
@@ -309,7 +309,7 @@ class PolzaBackend:
         # endpoints accept this shape. Falls back to plain json_object when
         # no schema is provided.
         if response_schema is not None:
-            response_format: Dict[str, Any] = {
+            response_format: dict[str, Any] = {
                 "type": "json_schema",
                 "json_schema": {
                     "name": "bpmn_response",
@@ -319,7 +319,7 @@ class PolzaBackend:
             }
         else:
             response_format = {"type": "json_object"}
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": system_prompt},
@@ -402,7 +402,9 @@ class PolzaBackend:
             detail = f"{prefix}: {polza_message}. {hint}" if polza_message else f"{prefix}. {hint}"
             return LLMClientError(detail, status_code=402)
         if status_code == 429:
-            return LLMClientError("Polza API rate limit reached. Try again shortly.", status_code=503)
+            return LLMClientError(
+                "Polza API rate limit reached. Try again shortly.", status_code=503
+            )
         return LLMClientError("Polza API request failed.")
 
     async def close(self):
@@ -424,7 +426,7 @@ class LLMClient:
         self,
         system_prompt: str,
         user_prompt: str,
-        response_schema: Optional[Dict[str, Any]] = None,
+        response_schema: dict[str, Any] | None = None,
     ) -> str:
         reservation = None
 
@@ -482,7 +484,7 @@ class LLMClient:
         """
         # Heuristic: if the end contains `\"}` (escaped quote before closing
         # brace) but the JSON couldn't parse, assume double-escaping.
-        if r'\"}' not in text and r'\",' not in text:
+        if r"\"}" not in text and r"\"," not in text:
             return None
         # Decode one level: replace `\"` → `"`, `\\` → `\`, `\n` → real newline.
         # We do this via json.loads wrapping — safest way.
@@ -493,10 +495,10 @@ class LLMClient:
         except json.JSONDecodeError:
             # Fallback: manual unescape of common patterns.
             return (
-                text.replace(r'\"', '"')
-                    .replace(r'\\', '\\')
-                    .replace(r'\n', '\n')
-                    .replace(r'\t', '\t')
+                text.replace(r"\"", '"')
+                .replace(r"\\", "\\")
+                .replace(r"\n", "\n")
+                .replace(r"\t", "\t")
             )
 
     def _repair_structural_escape(self, text: str) -> str | None:
@@ -518,11 +520,11 @@ class LLMClient:
         if not text.startswith("{"):
             return None
         # Pathology marker: structural comma-quote-key pattern escaped.
-        if r'\", \"' not in text and r'\",\"' not in text:
+        if r"\", \"" not in text and r"\",\"" not in text:
             return None
         candidate = text
         # Strip a single trailing stray `"` (the outer bookend).
-        if candidate.endswith('"') and not candidate.endswith(r'\"'):
+        if candidate.endswith('"') and not candidate.endswith(r"\""):
             candidate = candidate[:-1]
         # Revert one level of escape on structural tokens only:
         #   \",   → ",    (end of string value, start of next field)
@@ -531,14 +533,13 @@ class LLMClient:
         #   , \"  → , "   (start of next string value after comma)
         #   : \"  → : "   (start of string value after colon)
         repaired = (
-            candidate
-            .replace(r'\", \"', '", "')
-            .replace(r'\",\"', '","')
-            .replace(r'\": \"', '": "')
-            .replace(r'\":\"', '":"')
-            .replace(r'\"}', '"}')
-            .replace(r': \"', ': "')
-            .replace(r':\"', ':"')
+            candidate.replace(r"\", \"", '", "')
+            .replace(r"\",\"", '","')
+            .replace(r"\": \"", '": "')
+            .replace(r"\":\"", '":"')
+            .replace(r"\"}", '"}')
+            .replace(r": \"", ': "')
+            .replace(r":\"", ':"')
         )
         return repaired
 
@@ -556,15 +557,12 @@ class LLMClient:
                 try:
                     reparsed = json.loads(parsed)
                     if isinstance(reparsed, dict):
-                        logger.info(
-                            "Unwrapped stringified JSON from LLM response."
-                        )
+                        logger.info("Unwrapped stringified JSON from LLM response.")
                         return reparsed
                 except json.JSONDecodeError:
                     pass
                 raise ValueError(
-                    f"LLM returned a plain string, not a JSON object "
-                    f"(len={len(text)})"
+                    f"LLM returned a plain string, not a JSON object " f"(len={len(text)})"
                 )
             return parsed
         except json.JSONDecodeError as first_err:
@@ -584,9 +582,7 @@ class LLMClient:
             if struct_repaired is not None:
                 try:
                     result = json.loads(struct_repaired)
-                    logger.info(
-                        "Recovered structurally-escaped JSON from LLM response."
-                    )
+                    logger.info("Recovered structurally-escaped JSON from LLM response.")
                     return result
                 except json.JSONDecodeError:
                     pass  # fall through
@@ -600,19 +596,26 @@ class LLMClient:
                     logger.error(
                         "JSON parse failed (incl. recovery). len=%d first_err=%s "
                         "third_err=%s head=%r tail=%r",
-                        len(text), first_err, third_err, text[:200], text[-200:],
+                        len(text),
+                        first_err,
+                        third_err,
+                        text[:200],
+                        text[-200:],
                     )
                     raise ValueError(
                         f"Could not parse JSON from LLM response "
                         f"(len={len(text)}, err={third_err})"
-                    )
+                    ) from third_err
             logger.error(
                 "JSON parse failed, no outer braces. len=%d err=%s head=%r tail=%r",
-                len(text), first_err, text[:200], text[-200:],
+                len(text),
+                first_err,
+                text[:200],
+                text[-200:],
             )
             raise ValueError(
                 f"Could not parse JSON from LLM response (len={len(text)})"
-            )
+            ) from first_err
 
     def _unescape_xml(self, xml_str: str) -> str:
         if not xml_str.strip().startswith("<"):
@@ -625,8 +628,7 @@ class LLMClient:
     async def generate(self, description: str) -> dict:
         logger.info("Calling LLM for BPMN generation")
         original_prompt = (
-            f"Generate a BPMN 2.0 diagram for the following business "
-            f"process:\n\n{description}"
+            f"Generate a BPMN 2.0 diagram for the following business " f"process:\n\n{description}"
         )
         user_prompt = original_prompt
         needs_lanes = description_requires_lanes(description)
@@ -637,9 +639,9 @@ class LLMClient:
             )
 
         max_retries = 3
-        last_xml_without_lanes: Optional[str] = None
+        last_xml_without_lanes: str | None = None
         last_session_name: str = ""
-        error: Optional[str] = None
+        error: str | None = None
         for attempt in range(max_retries):
             raw = await self._call_llm(
                 SYSTEM_PROMPT_GENERATE, user_prompt, GENERATE_RESPONSE_SCHEMA
@@ -676,11 +678,7 @@ class LLMClient:
                 # degraded diagram. Cap at one such retry (the last
                 # attempt) so we don't loop forever on a model that
                 # genuinely can't extract lanes.
-                if (
-                    needs_lanes
-                    and not xml_has_lanes(bpmn_xml)
-                    and attempt < max_retries - 1
-                ):
+                if needs_lanes and not xml_has_lanes(bpmn_xml) and attempt < max_retries - 1:
                     last_xml_without_lanes = bpmn_xml
                     last_session_name = result["session_name"]
                     logger.warning(
@@ -740,17 +738,14 @@ class LLMClient:
     async def edit(self, prompt: str, bpmn_xml: str) -> dict:
         logger.info("Calling LLM for BPMN edit")
         original_prompt = (
-            f"Current BPMN XML:\n```xml\n{bpmn_xml}\n```\n\n"
-            f"Modification instruction: {prompt}"
+            f"Current BPMN XML:\n```xml\n{bpmn_xml}\n```\n\n" f"Modification instruction: {prompt}"
         )
         user_prompt = original_prompt
 
         max_retries = 3
-        error: Optional[str] = None
+        error: str | None = None
         for attempt in range(max_retries):
-            raw = await self._call_llm(
-                SYSTEM_PROMPT_EDIT, user_prompt, EDIT_RESPONSE_SCHEMA
-            )
+            raw = await self._call_llm(SYSTEM_PROMPT_EDIT, user_prompt, EDIT_RESPONSE_SCHEMA)
             try:
                 result = self._extract_json(raw)
             except ValueError as exc:
@@ -785,14 +780,14 @@ class LLMClient:
                 f"Please fix the issue and try again."
             )
 
-        raise ValueError(f"Failed to produce valid edited BPMN XML after {max_retries} attempts. Last error: {error}")
+        raise ValueError(
+            f"Failed to produce valid edited BPMN XML after {max_retries} attempts. Last error: {error}"
+        )
 
     async def classify(self, text: str) -> dict:
         """Classify whether input is a valid BPMN request."""
         logger.info("Calling LLM for input classification")
-        raw = await self._call_llm(
-            SYSTEM_PROMPT_CLASSIFY, text, CLASSIFY_RESPONSE_SCHEMA
-        )
+        raw = await self._call_llm(SYSTEM_PROMPT_CLASSIFY, text, CLASSIFY_RESPONSE_SCHEMA)
         result = self._extract_json(raw)
         return {
             "is_valid": bool(result.get("is_valid", False)),

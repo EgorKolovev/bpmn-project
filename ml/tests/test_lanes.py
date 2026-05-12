@@ -1,7 +1,7 @@
 """Unit tests for lane (swimlane) support — validator + bpmn_fix."""
+
 from app.bpmn_fix import ensure_lane_refs
 from app.validator import validate_bpmn_xml
-
 
 LANE_XML_VALID = """<?xml version="1.0" encoding="UTF-8"?>
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
@@ -114,6 +114,7 @@ class TestEnsureLaneRefs:
     def _parse_lanes(self, xml: str) -> dict[str, list[str]]:
         """Return {lane_id: [flow_node_ids]}."""
         from defusedxml import ElementTree as ET
+
         NS = "http://www.omg.org/spec/BPMN/20100524/MODEL"
         root = ET.fromstring(xml)
         process = root.find(f".//{{{NS}}}process")
@@ -122,10 +123,7 @@ class TestEnsureLaneRefs:
             return {}
         out: dict[str, list[str]] = {}
         for lane in lane_set.findall(f"{{{NS}}}lane"):
-            ids = [
-                (c.text or "").strip()
-                for c in lane.findall(f"{{{NS}}}flowNodeRef")
-            ]
+            ids = [(c.text or "").strip() for c in lane.findall(f"{{{NS}}}flowNodeRef")]
             out[lane.get("id", "")] = ids
         return out
 

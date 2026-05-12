@@ -7,7 +7,6 @@ from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-
 NANODOLLARS_PER_USD = 1_000_000_000
 TOKENS_PER_MILLION = 1_000_000
 PROMPT_TOKEN_RESERVE_MARGIN = 256
@@ -135,7 +134,10 @@ class BudgetTracker:
             actual_cost = row[0] if row else 0
             reserved_cost = row[1] if row else 0
 
-            if actual_cost + reserved_cost + reservation.reserved_cost_nanodollars > self.daily_limit_nanodollars:
+            if (
+                actual_cost + reserved_cost + reservation.reserved_cost_nanodollars
+                > self.daily_limit_nanodollars
+            ):
                 conn.execute("ROLLBACK")
                 raise DailyBudgetExceededError(
                     limit_usd=self.daily_limit_usd,

@@ -77,9 +77,7 @@ class TestBudgetTrackerConcurrency:
         def worker():
             try:
                 reservation = tracker.reserve_for_call(prompt_tokens=100)
-                tracker.finalize_call(
-                    reservation=reservation, prompt_tokens=100, output_tokens=200
-                )
+                tracker.finalize_call(reservation=reservation, prompt_tokens=100, output_tokens=200)
             except Exception as exc:  # noqa: BLE001
                 errors.append(exc)
 
@@ -127,8 +125,7 @@ class TestBudgetTrackerConcurrency:
         # The exact number depends on cost-per-call vs cap.
         assert approved_count > 0, "no reservation succeeded"
         assert rejected_count > 0, (
-            f"cap not enforced — all {N} reservations approved despite "
-            f"$0.10 cap"
+            f"cap not enforced — all {N} reservations approved despite " f"$0.10 cap"
         )
 
     def test_release_after_reserve_returns_budget_to_cap(self, tmp_path):
@@ -173,12 +170,8 @@ class TestBudgetTrackerConcurrency:
 
         async def one():
             loop = asyncio.get_event_loop()
-            reservation = await loop.run_in_executor(
-                None, tracker.reserve_for_call, 100
-            )
-            await loop.run_in_executor(
-                None, tracker.finalize_call, reservation, 100, 200
-            )
+            reservation = await loop.run_in_executor(None, tracker.reserve_for_call, 100)
+            await loop.run_in_executor(None, tracker.finalize_call, reservation, 100, 200)
             return True
 
         results = await asyncio.gather(*(one() for _ in range(N)))

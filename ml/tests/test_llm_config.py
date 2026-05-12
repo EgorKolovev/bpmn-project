@@ -4,11 +4,11 @@ These protect against accidentally re-introducing:
   * thinkingBudget=-1 (unbounded dynamic → HTTP timeouts)
   * 60-second HTTP timeouts (too short for complex thinking + long XML)
 """
+
 import os
 
 os.environ.setdefault("GEMINI_API_KEY", "test-key-for-unit-tests")
 
-import pytest
 
 from app import config
 from app.llm import GeminiBackend, PolzaBackend
@@ -51,6 +51,7 @@ class TestMaxOutputTokensDefault:
     def test_env_override_works(self, monkeypatch):
         """Operators can override via env without touching code."""
         import importlib
+
         monkeypatch.setenv("GEMINI_THINKING_BUDGET", "4096")
         importlib.reload(config)
         try:
@@ -67,12 +68,13 @@ class TestBackendTimeout:
         BPMN output on flash-lite can take >60s legitimately."""
         backend = GeminiBackend(api_key="dummy", model="gemini-2.5-flash", max_output_tokens=1024)
         try:
-            assert backend.http_client.timeout.read >= 120.0, (
-                f"Gemini HTTP timeout = {backend.http_client.timeout.read}s is too tight"
-            )
+            assert (
+                backend.http_client.timeout.read >= 120.0
+            ), f"Gemini HTTP timeout = {backend.http_client.timeout.read}s is too tight"
         finally:
             # Don't leak the AsyncClient
             import asyncio
+
             try:
                 loop = asyncio.new_event_loop()
                 loop.run_until_complete(backend.close())
@@ -82,12 +84,16 @@ class TestBackendTimeout:
 
     def test_polza_backend_timeout_at_least_120s(self):
         backend = PolzaBackend(
-            api_key="dummy", model="x/y", base_url="http://localhost", max_output_tokens=1024,
+            api_key="dummy",
+            model="x/y",
+            base_url="http://localhost",
+            max_output_tokens=1024,
         )
         try:
             assert backend.http_client.timeout.read >= 120.0
         finally:
             import asyncio
+
             try:
                 loop = asyncio.new_event_loop()
                 loop.run_until_complete(backend.close())

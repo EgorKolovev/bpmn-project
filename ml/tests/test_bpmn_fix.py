@@ -1,11 +1,10 @@
-import pytest
 import xml.etree.ElementTree as ET
+
 from app.bpmn_fix import (
     ensure_incoming_outgoing,
     fix_missing_namespace_declarations,
     strip_bpmn_diagram,
 )
-
 
 BPMN_NS = "http://www.omg.org/spec/BPMN/20100524/MODEL"
 
@@ -277,9 +276,9 @@ class TestFixMissingNamespaceDeclarations:
             '<bpmn:process id="P1">'
             '<bpmn:sequenceFlow id="F1" sourceRef="A" targetRef="B">'
             '<bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">ok</bpmn:conditionExpression>'
-            '</bpmn:sequenceFlow>'
-            '</bpmn:process>'
-            '</bpmn:definitions>'
+            "</bpmn:sequenceFlow>"
+            "</bpmn:process>"
+            "</bpmn:definitions>"
         )
         fixed = fix_missing_namespace_declarations(xml)
         assert 'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"' in fixed
@@ -291,7 +290,7 @@ class TestFixMissingNamespaceDeclarations:
             '<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"'
             ' xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
             '<bpmn:process id="P1"/>'
-            '</bpmn:definitions>'
+            "</bpmn:definitions>"
         )
         assert fix_missing_namespace_declarations(xml) == xml
 
@@ -299,7 +298,7 @@ class TestFixMissingNamespaceDeclarations:
         xml = (
             '<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">'
             '<bpmn:process id="P1"/>'
-            '</bpmn:definitions>'
+            "</bpmn:definitions>"
         )
         # No `xsi:` in body → nothing to inject
         assert fix_missing_namespace_declarations(xml) == xml
@@ -311,8 +310,8 @@ class TestFixMissingNamespaceDeclarations:
             '<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">'
             '<bpmn:process id="P1">'
             '<weird:thing xyz="z"/>'
-            '</bpmn:process>'
-            '</bpmn:definitions>'
+            "</bpmn:process>"
+            "</bpmn:definitions>"
         )
         assert fix_missing_namespace_declarations(xml) == xml
 
@@ -326,12 +325,10 @@ class TestFixMissingNamespaceDeclarations:
             '<bpmn:process id="P1">'
             '<bpmn:sequenceFlow id="F1">'
             '<bpmn:conditionExpression xsi:type="t">ok</bpmn:conditionExpression>'
-            '</bpmn:sequenceFlow>'
-            '</bpmn:process>'
-            '</bpmn:definitions>'
+            "</bpmn:sequenceFlow>"
+            "</bpmn:process>"
+            "</bpmn:definitions>"
         )
         once = fix_missing_namespace_declarations(xml)
         twice = fix_missing_namespace_declarations(once)
         assert once == twice
-
-

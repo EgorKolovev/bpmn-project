@@ -1,6 +1,5 @@
 import os
 
-
 # Model: `gemini-3-flash-preview` is the default after benchmarking on
 # real 10–13 KB customer PDFs (командировка, отправка документов).
 # Quality tier: flash-lite-preview < 2.5-flash ≈ 3-flash-preview, but

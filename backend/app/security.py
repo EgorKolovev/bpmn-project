@@ -5,16 +5,14 @@ import os
 import secrets
 import time
 from pathlib import Path
-from typing import Optional
 from uuid import UUID
-
 
 TOKEN_VERSION = "v2"
 DEFAULT_MAX_AGE_SECONDS = 7 * 24 * 3600  # 7 days
 
 
 def load_or_create_session_secret(
-    env_secret: Optional[str],
+    env_secret: str | None,
     secret_file: str,
 ) -> str:
     if env_secret:
@@ -35,7 +33,7 @@ def load_or_create_session_secret(
 
 
 def _compute_signature(user_id: UUID, issued_at: int, secret: str) -> str:
-    message = f"{user_id}:{issued_at}".encode("utf-8")
+    message = f"{user_id}:{issued_at}".encode()
     digest = hmac.new(
         secret.encode("utf-8"),
         message,
@@ -52,7 +50,7 @@ def issue_session_token(user_id: UUID, secret: str) -> str:
 
 def verify_session_token(
     user_id: UUID,
-    token: Optional[str],
+    token: str | None,
     secret: str,
     max_age_seconds: int = DEFAULT_MAX_AGE_SECONDS,
 ) -> bool:

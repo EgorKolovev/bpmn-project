@@ -6,8 +6,9 @@ to traverse the graph and generate correct edge waypoints.
 
 import logging
 import re
-from typing import Any
 import xml.etree.ElementTree as XmlET
+from typing import Any
+
 from defusedxml import ElementTree as SafeET
 
 logger = logging.getLogger(__name__)
@@ -16,13 +17,29 @@ BPMN_NS = "http://www.omg.org/spec/BPMN/20100524/MODEL"
 
 # Tags that are NOT flow nodes — everything else with an id is treated as one
 NON_FLOW_NODE_TAGS = {
-    "sequenceFlow", "messageFlow", "association", "dataObject",
-    "dataObjectReference", "dataStoreReference", "textAnnotation",
-    "incoming", "outgoing", "documentation", "extensionElements",
-    "conditionExpression", "multiInstanceLoopCharacteristics",
-    "standardLoopCharacteristics", "ioSpecification", "dataInput",
-    "dataOutput", "inputSet", "outputSet", "property",
-    "laneSet", "lane", "flowNodeRef",
+    "sequenceFlow",
+    "messageFlow",
+    "association",
+    "dataObject",
+    "dataObjectReference",
+    "dataStoreReference",
+    "textAnnotation",
+    "incoming",
+    "outgoing",
+    "documentation",
+    "extensionElements",
+    "conditionExpression",
+    "multiInstanceLoopCharacteristics",
+    "standardLoopCharacteristics",
+    "ioSpecification",
+    "dataInput",
+    "dataOutput",
+    "inputSet",
+    "outputSet",
+    "property",
+    "laneSet",
+    "lane",
+    "flowNodeRef",
 }
 
 
@@ -195,20 +212,17 @@ def fix_missing_namespace_declarations(xml_string: str) -> str:
     # Which prefixes does the document reference anywhere?
     used_prefixes = set(re.findall(r"(?<![A-Za-z0-9_.-])([A-Za-z_][\w\-.]*):[A-Za-z_]", xml_string))
     # Which are already declared on the root?
-    declared_prefixes = set(re.findall(r'xmlns:([A-Za-z_][\w\-.]*)\s*=', root_attrs))
+    declared_prefixes = set(re.findall(r"xmlns:([A-Za-z_][\w\-.]*)\s*=", root_attrs))
 
     missing = [
-        p for p in used_prefixes
-        if p in _WELL_KNOWN_NAMESPACES
-        and p not in declared_prefixes
-        and p != "xmlns"
+        p
+        for p in used_prefixes
+        if p in _WELL_KNOWN_NAMESPACES and p not in declared_prefixes and p != "xmlns"
     ]
     if not missing:
         return xml_string
 
-    injection = "".join(
-        f' xmlns:{p}="{_WELL_KNOWN_NAMESPACES[p]}"' for p in missing
-    )
+    injection = "".join(f' xmlns:{p}="{_WELL_KNOWN_NAMESPACES[p]}"' for p in missing)
     fixed_root = root_full[:-1] + injection + ">"
     result = xml_string.replace(root_full, fixed_root, 1)
     logger.info("Injected missing namespace declarations: %s", ", ".join(missing))
@@ -263,9 +277,7 @@ def ensure_lane_refs(xml_string: str) -> str:
             flow_node_id_set.add(eid)
 
     # Enumerate lanes and their current flowNodeRef lists
-    lanes: list[object] = [
-        child for child in list(lane_set) if _get_local_tag(child) == "lane"
-    ]
+    lanes: list[object] = [child for child in list(lane_set) if _get_local_tag(child) == "lane"]
     if not lanes:
         # laneSet exists but has no lanes — leave as-is (unusual)
         return xml_string

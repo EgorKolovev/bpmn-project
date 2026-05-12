@@ -17,9 +17,8 @@ Organized in sections:
 Anything that *can* be a plain function lives here as one, so test
 modules stay focused on assertions.
 """
-import asyncio
+
 import os
-import re
 from types import SimpleNamespace
 from typing import Any
 
@@ -27,7 +26,6 @@ import httpx
 import pytest
 import pytest_asyncio
 from defusedxml import ElementTree as ET
-
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -398,9 +396,16 @@ def all_flow_nodes_in_lanes(xml_string: str) -> tuple[bool, list[str]]:
     for elem in list(process):
         tag = elem.tag.split("}", 1)[-1] if "}" in elem.tag else elem.tag
         if tag in {
-            "sequenceFlow", "laneSet", "messageFlow", "association",
-            "dataObject", "dataObjectReference", "textAnnotation",
-            "documentation", "extensionElements", "ioSpecification",
+            "sequenceFlow",
+            "laneSet",
+            "messageFlow",
+            "association",
+            "dataObject",
+            "dataObjectReference",
+            "textAnnotation",
+            "documentation",
+            "extensionElements",
+            "ioSpecification",
         }:
             continue
         if eid := elem.get("id"):
@@ -519,9 +524,7 @@ async def ml_client(ml_base_url, internal_api_key):
 
 async def _classify(client: httpx.AsyncClient, text: str) -> dict[str, Any]:
     resp = await client.post("/classify", json={"text": text}, timeout=TIMEOUTS.CLASSIFY)
-    assert resp.status_code == 200, (
-        f"/classify failed: {resp.status_code} {resp.text}"
-    )
+    assert resp.status_code == 200, f"/classify failed: {resp.status_code} {resp.text}"
     return resp.json()
 
 
@@ -531,23 +534,17 @@ async def _generate(client: httpx.AsyncClient, description: str) -> dict[str, An
         json={"description": description},
         timeout=TIMEOUTS.LLM_CALL,
     )
-    assert resp.status_code == 200, (
-        f"/generate failed: {resp.status_code} {resp.text}"
-    )
+    assert resp.status_code == 200, f"/generate failed: {resp.status_code} {resp.text}"
     return resp.json()
 
 
-async def _edit(
-    client: httpx.AsyncClient, prompt: str, bpmn_xml: str
-) -> dict[str, Any]:
+async def _edit(client: httpx.AsyncClient, prompt: str, bpmn_xml: str) -> dict[str, Any]:
     resp = await client.post(
         "/edit",
         json={"prompt": prompt, "bpmn_xml": bpmn_xml},
         timeout=TIMEOUTS.LLM_CALL,
     )
-    assert resp.status_code == 200, (
-        f"/edit failed: {resp.status_code} {resp.text}"
-    )
+    assert resp.status_code == 200, f"/edit failed: {resp.status_code} {resp.text}"
     return resp.json()
 
 

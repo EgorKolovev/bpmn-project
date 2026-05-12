@@ -6,6 +6,7 @@ Covers three recovery strategies in `LLMClient._extract_json`:
      escaped — Anton's "командировка" failure mode on flash-lite).
   3. Regex-based outer {...} extraction (chatty wrappers).
 """
+
 import json
 import os
 
@@ -29,6 +30,7 @@ def client():
     )
     yield LLMClient(budget_tracker=tracker, backend=backend)
     import asyncio
+
     try:
         loop = asyncio.new_event_loop()
         loop.run_until_complete(backend.close())
@@ -81,9 +83,7 @@ class TestStructuralEscapeRecovery:
 
     def test_no_trailing_quote_still_recovers(self, client):
         """Same pathology but without the trailing stray quote."""
-        raw = (
-            '{"bpmn_xml": "<xml/>\\", \\"session_name\\": \\"X\\"}'
-        )
+        raw = '{"bpmn_xml": "<xml/>\\", \\"session_name\\": \\"X\\"}'
         result = client._extract_json(raw)
         assert result["bpmn_xml"] == "<xml/>"
         assert result["session_name"] == "X"
@@ -102,6 +102,7 @@ class TestResponseSchemaInPayload:
 
     def test_generate_schema_present(self):
         from app.llm import GENERATE_RESPONSE_SCHEMA
+
         backend = GeminiBackend(api_key="dummy", model="gemini-2.5-flash", max_output_tokens=512)
         try:
             payload = backend._build_payload("sys", "user", GENERATE_RESPONSE_SCHEMA)
@@ -113,6 +114,7 @@ class TestResponseSchemaInPayload:
             assert "bpmn_xml" in schema["required"]
         finally:
             import asyncio
+
             try:
                 loop = asyncio.new_event_loop()
                 loop.run_until_complete(backend.close())
@@ -131,6 +133,7 @@ class TestResponseSchemaInPayload:
             assert payload["generationConfig"]["responseMimeType"] == "application/json"
         finally:
             import asyncio
+
             try:
                 loop = asyncio.new_event_loop()
                 loop.run_until_complete(backend.close())
@@ -141,13 +144,18 @@ class TestResponseSchemaInPayload:
     def test_polza_schema_uses_json_schema_format(self):
         """Polza (OpenAI-compatible) uses response_format.type=json_schema,
         not Gemini's responseJsonSchema. Keep both wire formats in sync."""
-        from app.llm import PolzaBackend, EDIT_RESPONSE_SCHEMA
+        from app.llm import PolzaBackend
+
         backend = PolzaBackend(
-            api_key="dummy", model="x/y", base_url="http://localhost", max_output_tokens=512,
+            api_key="dummy",
+            model="x/y",
+            base_url="http://localhost",
+            max_output_tokens=512,
         )
         # We just verify the helper can be built — actual HTTP call is
         # out of scope for unit tests. Schema threading tested via llm.py.
         import asyncio
+
         try:
             loop = asyncio.new_event_loop()
             loop.run_until_complete(backend.close())
@@ -162,6 +170,7 @@ class TestCharLimitRaised:
 
     def test_ml_request_limit_ge_20000(self):
         from app import config
+
         assert config.REQUEST_CHAR_LIMIT >= 20000, (
             f"REQUEST_CHAR_LIMIT = {config.REQUEST_CHAR_LIMIT} is too tight "
             "for real customer specs (10–13 KB PDFs)."
@@ -175,28 +184,33 @@ class TestPolzaReasoningMapping:
 
     def test_zero_disables_reasoning(self):
         from app.llm import _map_budget_to_effort
+
         assert _map_budget_to_effort(0) is None
 
     def test_negative_disables_reasoning(self):
         """Defensive: -1 (dynamic) also disables — dynamic is
         explicitly forbidden anyway, but don't crash on it."""
         from app.llm import _map_budget_to_effort
+
         assert _map_budget_to_effort(-1) is None
 
     def test_low_bucket(self):
         from app.llm import _map_budget_to_effort
+
         assert _map_budget_to_effort(512) == "low"
         assert _map_budget_to_effort(1024) == "low"
         assert _map_budget_to_effort(2048) == "low"
 
     def test_medium_bucket(self):
         from app.llm import _map_budget_to_effort
+
         assert _map_budget_to_effort(2049) == "medium"
         assert _map_budget_to_effort(4096) == "medium"
         assert _map_budget_to_effort(5000) == "medium"
 
     def test_high_bucket(self):
         from app.llm import _map_budget_to_effort
+
         assert _map_budget_to_effort(5001) == "high"
         assert _map_budget_to_effort(8000) == "high"
         assert _map_budget_to_effort(16384) == "high"
@@ -206,6 +220,7 @@ class TestPolzaReasoningMapping:
         that's what PDF benchmarks were validated with."""
         from app import config
         from app.llm import _map_budget_to_effort
+
         assert _map_budget_to_effort(config.GEMINI_THINKING_BUDGET) == "medium"
 
 
@@ -218,23 +233,30 @@ class TestPolza402Translation:
     def _make_http_error(self, body: dict):
         """Build a fake httpx.HTTPStatusError with the given body."""
         import httpx
+
         request = httpx.Request("POST", "https://polza.ai/api/v1/chat/completions")
         response = httpx.Response(402, content=json.dumps(body).encode(), request=request)
         return httpx.HTTPStatusError("402", request=request, response=response)
 
     def test_daily_cap_message_recognized(self):
         from app.llm import PolzaBackend
+
         backend = PolzaBackend(
-            api_key="x", model="y/z", base_url="http://localhost", max_output_tokens=100,
+            api_key="x",
+            model="y/z",
+            base_url="http://localhost",
+            max_output_tokens=100,
         )
         try:
-            exc = self._make_http_error({
-                "error": {
-                    "code": "INSUFFICIENT_BALANCE",
-                    "message": "Достигнут дневной лимит по сумме",
-                },
-                "trace_id": "abc",
-            })
+            exc = self._make_http_error(
+                {
+                    "error": {
+                        "code": "INSUFFICIENT_BALANCE",
+                        "message": "Достигнут дневной лимит по сумме",
+                    },
+                    "trace_id": "abc",
+                }
+            )
             err = backend.translate_http_error(exc)
             assert err.status_code == 402
             assert "INSUFFICIENT_BALANCE" in err.message
@@ -243,6 +265,7 @@ class TestPolza402Translation:
             assert "polza.ai/dashboard" in err.message
         finally:
             import asyncio
+
             try:
                 loop = asyncio.new_event_loop()
                 loop.run_until_complete(backend.close())
@@ -252,16 +275,22 @@ class TestPolza402Translation:
 
     def test_generic_insufficient_balance(self):
         from app.llm import PolzaBackend
+
         backend = PolzaBackend(
-            api_key="x", model="y/z", base_url="http://localhost", max_output_tokens=100,
+            api_key="x",
+            model="y/z",
+            base_url="http://localhost",
+            max_output_tokens=100,
         )
         try:
-            exc = self._make_http_error({
-                "error": {
-                    "code": "INSUFFICIENT_BALANCE",
-                    "message": "Insufficient balance",
-                },
-            })
+            exc = self._make_http_error(
+                {
+                    "error": {
+                        "code": "INSUFFICIENT_BALANCE",
+                        "message": "Insufficient balance",
+                    },
+                }
+            )
             err = backend.translate_http_error(exc)
             assert err.status_code == 402
             assert "INSUFFICIENT_BALANCE" in err.message
@@ -270,6 +299,7 @@ class TestPolza402Translation:
             assert "Daily spend cap" not in err.message
         finally:
             import asyncio
+
             try:
                 loop = asyncio.new_event_loop()
                 loop.run_until_complete(backend.close())
@@ -282,11 +312,16 @@ class TestPolza402Translation:
         return a 402 LLMClientError with a fallback message rather
         than crashing."""
         from app.llm import PolzaBackend
+
         backend = PolzaBackend(
-            api_key="x", model="y/z", base_url="http://localhost", max_output_tokens=100,
+            api_key="x",
+            model="y/z",
+            base_url="http://localhost",
+            max_output_tokens=100,
         )
         try:
             import httpx
+
             request = httpx.Request("POST", "https://polza.ai/api/v1/chat/completions")
             response = httpx.Response(402, content=b"not json at all", request=request)
             exc = httpx.HTTPStatusError("402", request=request, response=response)
@@ -295,6 +330,7 @@ class TestPolza402Translation:
             assert "Polza" in err.message
         finally:
             import asyncio
+
             try:
                 loop = asyncio.new_event_loop()
                 loop.run_until_complete(backend.close())

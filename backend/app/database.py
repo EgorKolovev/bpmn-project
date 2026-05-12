@@ -1,7 +1,7 @@
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
-from app.config import DATABASE_URL
 
+from app.config import DATABASE_URL
 
 _pg_kwargs = (
     {"pool_size": 20, "max_overflow": 5, "pool_pre_ping": True}

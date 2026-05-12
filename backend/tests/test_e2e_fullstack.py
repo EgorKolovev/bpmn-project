@@ -22,7 +22,7 @@ mocked ml.
 
 Run with `RUN_E2E=1 pytest backend/tests/test_e2e_fullstack.py -v`.
 """
-import pytest
+
 import socketio  # python-socketio client
 
 from tests.conftest import (
@@ -30,7 +30,6 @@ from tests.conftest import (
     TIMEOUTS,
     SocketConversation,
 )
-
 
 pytestmark = E2E_MARKERS
 
@@ -45,12 +44,8 @@ RU_WEATHER = "Какая сегодня погода?"
 async def test_russian_generate_round_trip(socketio_conversation):
     """Russian description → Russian BPMN diagram back via Socket.IO.
     The simplest end-to-end smoke for the entire stack."""
-    await socketio_conversation.send(
-        {"action": "message", "text": RU_VALID_PROCESS}
-    )
-    result = await socketio_conversation.wait_for_action(
-        "result", timeout=TIMEOUTS.SOCKETIO_EVENT
-    )
+    await socketio_conversation.send({"action": "message", "text": RU_VALID_PROCESS})
+    result = await socketio_conversation.wait_for_action("result", timeout=TIMEOUTS.SOCKETIO_EVENT)
     assert "bpmn_xml" in result
     assert "session_id" in result
     assert result.get("session_name")
@@ -63,12 +58,8 @@ async def test_russian_generate_round_trip(socketio_conversation):
 async def test_classify_rejection_round_trip(socketio_conversation):
     """Weather question → classify rejects → user gets an `error`
     event with a reason, NOT a `result`."""
-    await socketio_conversation.send(
-        {"action": "message", "text": RU_WEATHER}
-    )
-    error = await socketio_conversation.wait_for_action(
-        "error", timeout=TIMEOUTS.SOCKETIO_EVENT
-    )
+    await socketio_conversation.send({"action": "message", "text": RU_WEATHER})
+    error = await socketio_conversation.wait_for_action("error", timeout=TIMEOUTS.SOCKETIO_EVENT)
     assert error.get("message"), "expected non-empty error message"
 
 
@@ -94,14 +85,10 @@ async def test_websocket_reconnect_restores_user_session(backend_url):
     await client_a.connect(backend_url, socketio_path="/socket.io")
     try:
         await convo_a.send({"action": "init"})
-        first_init = await convo_a.wait_for_action(
-            "init_data", timeout=TIMEOUTS.SOCKETIO_INIT
-        )
+        first_init = await convo_a.wait_for_action("init_data", timeout=TIMEOUTS.SOCKETIO_INIT)
         user_id = first_init["user_id"]
         session_token = first_init["session_token"]
-        assert user_id and session_token, (
-            f"init_data missing credentials: {first_init!r}"
-        )
+        assert user_id and session_token, f"init_data missing credentials: {first_init!r}"
 
         # Use a known-valid Russian process so /classify accepts it
         # without burning LLM time on retries.
@@ -114,9 +101,7 @@ async def test_websocket_reconnect_restores_user_session(backend_url):
                 ),
             }
         )
-        result = await convo_a.wait_for_action(
-            "result", timeout=TIMEOUTS.SOCKETIO_EVENT
-        )
+        result = await convo_a.wait_for_action("result", timeout=TIMEOUTS.SOCKETIO_EVENT)
         created_session_id = result["session_id"]
     finally:
         await client_a.disconnect()
@@ -131,17 +116,14 @@ async def test_websocket_reconnect_restores_user_session(backend_url):
     )
     try:
         await convo_b.send({"action": "init"})
-        second_init = await convo_b.wait_for_action(
-            "init_data", timeout=TIMEOUTS.SOCKETIO_INIT
-        )
-        assert second_init["user_id"] == user_id, (
-            f"reconnect changed user_id: {user_id} → {second_init['user_id']}"
-        )
+        second_init = await convo_b.wait_for_action("init_data", timeout=TIMEOUTS.SOCKETIO_INIT)
+        assert (
+            second_init["user_id"] == user_id
+        ), f"reconnect changed user_id: {user_id} → {second_init['user_id']}"
         sessions = second_init.get("sessions", [])
         session_ids = [s.get("session_id") for s in sessions]
         assert created_session_id in session_ids, (
-            f"session created before disconnect was lost on reconnect; "
-            f"got: {session_ids!r}"
+            f"session created before disconnect was lost on reconnect; " f"got: {session_ids!r}"
         )
     finally:
         await client_b.disconnect()

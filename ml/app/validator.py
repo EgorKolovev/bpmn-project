@@ -1,6 +1,4 @@
-from typing import Optional
 from defusedxml import ElementTree as ET
-
 
 BPMN_NS = "http://www.omg.org/spec/BPMN/20100524/MODEL"
 BPMNDI_NS = "http://www.omg.org/spec/BPMN/20100524/DI"
@@ -16,13 +14,29 @@ NAMESPACES = {
 
 # Tags that are NOT flow nodes (should not be collected as connectable elements)
 NON_FLOW_NODE_TAGS = {
-    "sequenceFlow", "messageFlow", "association", "dataObject",
-    "dataObjectReference", "dataStoreReference", "textAnnotation",
-    "incoming", "outgoing", "documentation", "extensionElements",
-    "conditionExpression", "multiInstanceLoopCharacteristics",
-    "standardLoopCharacteristics", "ioSpecification", "dataInput",
-    "dataOutput", "inputSet", "outputSet", "property",
-    "laneSet", "lane", "flowNodeRef",
+    "sequenceFlow",
+    "messageFlow",
+    "association",
+    "dataObject",
+    "dataObjectReference",
+    "dataStoreReference",
+    "textAnnotation",
+    "incoming",
+    "outgoing",
+    "documentation",
+    "extensionElements",
+    "conditionExpression",
+    "multiInstanceLoopCharacteristics",
+    "standardLoopCharacteristics",
+    "ioSpecification",
+    "dataInput",
+    "dataOutput",
+    "inputSet",
+    "outputSet",
+    "property",
+    "laneSet",
+    "lane",
+    "flowNodeRef",
 }
 
 
@@ -42,7 +56,7 @@ def _flow_has_label(flow_elem) -> bool:
     return False
 
 
-def validate_bpmn_xml(xml_string: str) -> Optional[str]:
+def validate_bpmn_xml(xml_string: str) -> str | None:
     """Validate BPMN 2.0 XML. Returns None if valid, error message if invalid.
 
     Hard-failure checks:
@@ -107,7 +121,7 @@ def validate_bpmn_xml(xml_string: str) -> Optional[str]:
     if not has_end:
         return "No endEvent found in process"
 
-    for source, target, flow_id in sequence_flows:
+    for source, target, _flow_id in sequence_flows:
         if source not in flow_node_ids:
             return f"sequenceFlow references unknown sourceRef '{source}'"
         if target not in flow_node_ids:
@@ -148,9 +162,7 @@ def validate_bpmn_xml(xml_string: str) -> Optional[str]:
 
     # Rule: every diverging exclusiveGateway (2+ outgoing flows) must have at
     # least ONE outgoing flow labeled with `name` or <conditionExpression>.
-    outgoing_by_gateway: dict[str, list[object]] = {
-        gw_id: [] for gw_id in exclusive_gateway_ids
-    }
+    outgoing_by_gateway: dict[str, list[object]] = {gw_id: [] for gw_id in exclusive_gateway_ids}
     for source, _target, flow_id in sequence_flows:
         if source in exclusive_gateway_ids and flow_id:
             flow_elem = sequence_flow_by_id.get(flow_id)
@@ -213,11 +225,7 @@ def get_bpmn_warnings(xml_string: str) -> list[str]:
         flow_ids = flows_per_gateway.get(gw_id, [])
         if len(flow_ids) < 2:
             continue
-        unlabeled = [
-            fid
-            for fid in flow_ids
-            if not _flow_has_label(sequence_flow_by_id[fid])
-        ]
+        unlabeled = [fid for fid in flow_ids if not _flow_has_label(sequence_flow_by_id[fid])]
         # All labeled → perfect. None labeled → already hard-failed above.
         # Some labeled → warn about the unlabeled branch(es).
         if 0 < len(unlabeled) < len(flow_ids):

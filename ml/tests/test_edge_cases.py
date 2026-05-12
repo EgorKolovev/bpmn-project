@@ -13,23 +13,21 @@ exercise the deterministic parts of the pipeline:
     flow nodes without IDs.
   * The FastAPI endpoints' input validation via `TestClient`.
 """
+
 import os
 
 os.environ.setdefault("GEMINI_API_KEY", "test-key-for-unit-tests")
 
-import json
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from app import config
-from app.bpmn_layout import layout_bpmn, has_layout
-from app.llm import LLMClient, GeminiBackend, LLMClientError
+from app.bpmn_layout import has_layout, layout_bpmn
 from app.budget import BudgetTracker
-
+from app.llm import GeminiBackend, LLMClient, LLMClientError
 from tests.conftest import VALID_BPMN_XML_NO_DI, make_gemini_count_response, make_gemini_response
-
 
 # ---------------------------------------------------------------------------
 # LLMClient — empty / weird LLM responses
@@ -49,6 +47,7 @@ def _budget(tmp_path):
 def _wire_gemini(monkeypatch, tmp_path, gen_text: str):
     """Build an LLMClient whose backend returns `gen_text` from
     generateContent and a benign 100-token count from countTokens."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         if "countTokens" in str(request.url):
             return httpx.Response(200, json=make_gemini_count_response())
@@ -138,6 +137,7 @@ class TestLayoutEdgeCases:
         # Layout succeeds for the 2 nodes with IDs; the nameless one
         # is silently skipped.
         import re
+
         shape_count = len(re.findall(r"<bpmndi:BPMNShape", out))
         assert shape_count == 2
 
@@ -156,9 +156,9 @@ class TestLayoutEdgeCases:
         for i in range(N):
             node_xml.append(
                 f'<bpmn:task id="T{i}" name="Task {i}">'
-                f'<bpmn:incoming>F{i}</bpmn:incoming>'
-                f'<bpmn:outgoing>F{i+1}</bpmn:outgoing>'
-                f'</bpmn:task>'
+                f"<bpmn:incoming>F{i}</bpmn:incoming>"
+                f"<bpmn:outgoing>F{i+1}</bpmn:outgoing>"
+                f"</bpmn:task>"
             )
         flow_xml = "".join(
             f'<bpmn:sequenceFlow id="F{i+1}" sourceRef="T{i}" targetRef="T{i+1}"/>'
@@ -171,7 +171,7 @@ class TestLayoutEdgeCases:
             '<bpmn:startEvent id="Start"><bpmn:outgoing>F0</bpmn:outgoing></bpmn:startEvent>'
             + "".join(node_xml)
             + '<bpmn:endEvent id="End"><bpmn:incoming>F_END</bpmn:incoming></bpmn:endEvent>'
-            + f'<bpmn:sequenceFlow id="F0" sourceRef="Start" targetRef="T0"/>'
+            + '<bpmn:sequenceFlow id="F0" sourceRef="Start" targetRef="T0"/>'
             + flow_xml
             + f'<bpmn:sequenceFlow id="F_END" sourceRef="T{N-1}" targetRef="End"/>'
             + "</bpmn:process></bpmn:definitions>"
@@ -179,6 +179,7 @@ class TestLayoutEdgeCases:
         out = layout_bpmn(xml)
         assert has_layout(out)
         import re
+
         # All N tasks + Start + End → N+2 shapes.
         assert len(re.findall(r"<bpmndi:BPMNShape", out)) == N + 2
 
@@ -235,9 +236,7 @@ class TestEndpointValidation:
     def test_generate_unknown_extra_field_returns_422(self, app_client):
         """`model_config = ConfigDict(extra="forbid")` — request must
         be rejected if it carries unexpected fields."""
-        r = app_client.post(
-            "/generate", json={"description": "ok", "rogue_field": "x"}
-        )
+        r = app_client.post("/generate", json={"description": "ok", "rogue_field": "x"})
         assert r.status_code == 422
 
     def test_edit_missing_bpmn_xml_returns_422(self, app_client):
@@ -250,9 +249,7 @@ class TestEndpointValidation:
 
     def test_edit_oversized_bpmn_xml_returns_422(self, app_client):
         oversized = "<x>" + "y" * (config.BPMN_XML_CHAR_LIMIT + 100) + "</x>"
-        r = app_client.post(
-            "/edit", json={"prompt": "Add something", "bpmn_xml": oversized}
-        )
+        r = app_client.post("/edit", json={"prompt": "Add something", "bpmn_xml": oversized})
         assert r.status_code == 422
 
     def test_classify_empty_text_returns_422(self, app_client):

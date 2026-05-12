@@ -8,6 +8,7 @@ Covers:
 
 These are pure-function tests; no LLM calls.
 """
+
 import os
 
 os.environ.setdefault("GEMINI_API_KEY", "test-key-for-unit-tests")
@@ -18,40 +19,44 @@ from app.llm import description_requires_lanes, xml_has_lanes
 
 
 class TestDescriptionRequiresLanes:
-    @pytest.mark.parametrize("desc", [
-        "Используй роли: сотрудник, директор.",
-        "используй роли ниже",
-        "Схема в 3 ролях: A, B, C",
-        "Процесс в 2 ролях",
-        "Роли: менеджер, юрист, директор",
-        "Участники: Alice, Bob",
-        "Актёры: X, Y",
-        "Use roles: manager, legal, director",
-        "The process runs in 4 roles",
-        "Actors: HR, Legal",
-        "Participants: customer, support",
-        "Group by role",
-        "With roles assigned to each step",
-        "Swimlanes: sales, legal, finance",
-    ])
+    @pytest.mark.parametrize(
+        "desc",
+        [
+            "Используй роли: сотрудник, директор.",
+            "используй роли ниже",
+            "Схема в 3 ролях: A, B, C",
+            "Процесс в 2 ролях",
+            "Роли: менеджер, юрист, директор",
+            "Участники: Alice, Bob",
+            "Актёры: X, Y",
+            "Use roles: manager, legal, director",
+            "The process runs in 4 roles",
+            "Actors: HR, Legal",
+            "Participants: customer, support",
+            "Group by role",
+            "With roles assigned to each step",
+            "Swimlanes: sales, legal, finance",
+        ],
+    )
     def test_positive_triggers(self, desc):
-        assert description_requires_lanes(desc), (
-            f"Expected {desc!r} to trigger lane requirement"
-        )
+        assert description_requires_lanes(desc), f"Expected {desc!r} to trigger lane requirement"
 
-    @pytest.mark.parametrize("desc", [
-        "Employee onboarding process with HR approval",
-        "Order fulfillment: receive, pack, ship.",
-        "Процесс согласования договора: менеджер создаёт заявку.",
-        "The customer submits a ticket and waits.",
-        # "role" in casual context — NOT an enumeration trigger
-        "The manager's role in this process is to approve.",
-        "User registration with email confirmation.",
-    ])
+    @pytest.mark.parametrize(
+        "desc",
+        [
+            "Employee onboarding process with HR approval",
+            "Order fulfillment: receive, pack, ship.",
+            "Процесс согласования договора: менеджер создаёт заявку.",
+            "The customer submits a ticket and waits.",
+            # "role" in casual context — NOT an enumeration trigger
+            "The manager's role in this process is to approve.",
+            "User registration with email confirmation.",
+        ],
+    )
     def test_negative_no_false_positives(self, desc):
-        assert not description_requires_lanes(desc), (
-            f"{desc!r} should NOT trigger the lane requirement"
-        )
+        assert not description_requires_lanes(
+            desc
+        ), f"{desc!r} should NOT trigger the lane requirement"
 
 
 class TestXmlHasLanes:
@@ -73,7 +78,7 @@ class TestXmlHasLanes:
 
     def test_rejects_similar_name(self):
         # `laneRef` / `landing` should not match `laneSet`
-        xml = '<bpmn:process><bpmn:landingZone/></bpmn:process>'
+        xml = "<bpmn:process><bpmn:landingZone/></bpmn:process>"
         assert not xml_has_lanes(xml)
 
 

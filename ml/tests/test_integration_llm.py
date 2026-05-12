@@ -21,11 +21,11 @@ the backend's `http_client` via monkeypatch.
 The tests are pure asyncio / fast (well under one second total).
 Independent of the running ml container.
 """
+
 from __future__ import annotations
 
 import json
 import os
-import re
 
 os.environ.setdefault("GEMINI_API_KEY", "test-key-for-unit-tests")
 
@@ -36,8 +36,8 @@ from app.budget import BudgetTracker
 from app.llm import (
     GeminiBackend,
     LLMClient,
-    PolzaBackend,
     LLMClientError,
+    PolzaBackend,
 )
 from tests.conftest import (
     VALID_BPMN_XML_NO_DI,
@@ -45,7 +45,6 @@ from tests.conftest import (
     make_gemini_response,
     make_polza_response,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -94,10 +93,12 @@ class _SequencedTransport:
 
     Example::
 
-        transport = _SequencedTransport({
-            "countTokens": [count_resp, count_resp, count_resp, count_resp],
-            "generateContent": [bad_resp, good_resp],
-        })
+        transport = _SequencedTransport(
+            {
+                "countTokens": [count_resp, count_resp, count_resp, count_resp],
+                "generateContent": [bad_resp, good_resp],
+            }
+        )
     """
 
     def __init__(self, sequences: dict):
@@ -105,14 +106,12 @@ class _SequencedTransport:
         # NOTE: a tuple is treated as a `(status, body)` response, NOT
         # as a sequence — use `list` if you want multiple responses.
         self._queues: dict[str, list] = {
-            k: list(v) if isinstance(v, list) else [v]
-            for k, v in sequences.items()
+            k: list(v) if isinstance(v, list) else [v] for k, v in sequences.items()
         }
         self.requests: list[httpx.Request] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
-        path = request.url.path + ":" + (request.url.path.split(":")[-1] if ":" in request.url.path else "")
         for needle, queue in self._queues.items():
             if needle in str(request.url):
                 if not queue:
@@ -133,7 +132,9 @@ class _SequencedTransport:
         return httpx.MockTransport(self)
 
 
-def _make_gemini_client(monkeypatch, tmp_path, sequences: dict) -> tuple[LLMClient, _SequencedTransport]:
+def _make_gemini_client(
+    monkeypatch, tmp_path, sequences: dict
+) -> tuple[LLMClient, _SequencedTransport]:
     """Wire a fresh LLMClient on top of GeminiBackend with the supplied
     canned-response sequences. Returns (client, transport) so tests can
     introspect `transport.requests` after the call.
@@ -144,16 +145,22 @@ def _make_gemini_client(monkeypatch, tmp_path, sequences: dict) -> tuple[LLMClie
         model="gemini-3-flash-preview",
         max_output_tokens=4096,
     )
-    monkeypatch.setattr(backend, "http_client", httpx.AsyncClient(
-        transport=seq.transport(),
-        headers={"x-goog-api-key": "dummy"},
-        base_url="https://generativelanguage.googleapis.com",
-    ))
+    monkeypatch.setattr(
+        backend,
+        "http_client",
+        httpx.AsyncClient(
+            transport=seq.transport(),
+            headers={"x-goog-api-key": "dummy"},
+            base_url="https://generativelanguage.googleapis.com",
+        ),
+    )
     tracker = _budget_tracker(tmp_path)
     return LLMClient(budget_tracker=tracker, backend=backend), seq
 
 
-def _make_polza_client(monkeypatch, tmp_path, sequences: dict) -> tuple[LLMClient, _SequencedTransport]:
+def _make_polza_client(
+    monkeypatch, tmp_path, sequences: dict
+) -> tuple[LLMClient, _SequencedTransport]:
     seq = _SequencedTransport(sequences)
     backend = PolzaBackend(
         api_key="dummy",
@@ -161,11 +168,15 @@ def _make_polza_client(monkeypatch, tmp_path, sequences: dict) -> tuple[LLMClien
         base_url="http://polza-mock",
         max_output_tokens=4096,
     )
-    monkeypatch.setattr(backend, "http_client", httpx.AsyncClient(
-        transport=seq.transport(),
-        headers={"Authorization": "Bearer dummy"},
-        base_url="http://polza-mock",
-    ))
+    monkeypatch.setattr(
+        backend,
+        "http_client",
+        httpx.AsyncClient(
+            transport=seq.transport(),
+            headers={"Authorization": "Bearer dummy"},
+            base_url="http://polza-mock",
+        ),
+    )
     tracker = _budget_tracker(tmp_path)
     return LLMClient(budget_tracker=tracker, backend=backend), seq
 
@@ -180,13 +191,15 @@ async def test_generate_happy_path(monkeypatch, tmp_path):
     """Valid description → countTokens 200 → generateContent 200 with
     well-formed JSON → returned dict has bpmn_xml + session_name AND
     server-side layout has baked BPMNDiagram in."""
-    client, seq = _make_gemini_client(monkeypatch, tmp_path, {
-        "countTokens": make_gemini_count_response(),
-        "generateContent": _gemini_response_body(VALID_BPMN_XML_NO_DI, "Linear Test"),
-    })
-    result = await client.generate(
-        "Order fulfillment: receive order, verify payment, ship item."
+    client, seq = _make_gemini_client(
+        monkeypatch,
+        tmp_path,
+        {
+            "countTokens": make_gemini_count_response(),
+            "generateContent": _gemini_response_body(VALID_BPMN_XML_NO_DI, "Linear Test"),
+        },
     )
+    result = await client.generate("Order fulfillment: receive order, verify payment, ship item.")
     assert result["session_name"] == "Linear Test"
     assert "bpmn_xml" in result
     # layout_bpmn() runs at the end of generate() — diagram must be present
@@ -196,10 +209,14 @@ async def test_generate_happy_path(monkeypatch, tmp_path):
 @pytest.mark.asyncio
 async def test_edit_happy_path(monkeypatch, tmp_path):
     new_xml = VALID_BPMN_XML_NO_DI
-    client, _ = _make_gemini_client(monkeypatch, tmp_path, {
-        "countTokens": make_gemini_count_response(),
-        "generateContent": _gemini_edit_response(new_xml),
-    })
+    client, _ = _make_gemini_client(
+        monkeypatch,
+        tmp_path,
+        {
+            "countTokens": make_gemini_count_response(),
+            "generateContent": _gemini_edit_response(new_xml),
+        },
+    )
     result = await client.edit("Add a verification step.", VALID_BPMN_XML_NO_DI)
     assert "bpmn_xml" in result
     assert "<bpmndi:BPMNDiagram" in result["bpmn_xml"]
@@ -207,20 +224,28 @@ async def test_edit_happy_path(monkeypatch, tmp_path):
 
 @pytest.mark.asyncio
 async def test_classify_happy_path(monkeypatch, tmp_path):
-    client, _ = _make_gemini_client(monkeypatch, tmp_path, {
-        "countTokens": make_gemini_count_response(),
-        "generateContent": _gemini_classify_response(True),
-    })
+    client, _ = _make_gemini_client(
+        monkeypatch,
+        tmp_path,
+        {
+            "countTokens": make_gemini_count_response(),
+            "generateContent": _gemini_classify_response(True),
+        },
+    )
     result = await client.classify("Order fulfillment process")
     assert result["is_valid"] is True
 
 
 @pytest.mark.asyncio
 async def test_classify_rejection_passes_reason(monkeypatch, tmp_path):
-    client, _ = _make_gemini_client(monkeypatch, tmp_path, {
-        "countTokens": make_gemini_count_response(),
-        "generateContent": _gemini_classify_response(False, "Not a business process"),
-    })
+    client, _ = _make_gemini_client(
+        monkeypatch,
+        tmp_path,
+        {
+            "countTokens": make_gemini_count_response(),
+            "generateContent": _gemini_classify_response(False, "Not a business process"),
+        },
+    )
     result = await client.classify("What is the weather?")
     assert result["is_valid"] is False
     assert "weather" in result["reason"].lower() or "business" in result["reason"].lower()
@@ -237,10 +262,14 @@ async def test_generate_retries_on_json_parse_failure(monkeypatch, tmp_path):
     succeed."""
     bad = make_gemini_response(text="Sure! Here's your diagram. {garbage")
     good = _gemini_response_body(VALID_BPMN_XML_NO_DI, "After Retry")
-    client, seq = _make_gemini_client(monkeypatch, tmp_path, {
-        "countTokens": make_gemini_count_response(),
-        "generateContent": [bad, good],
-    })
+    client, seq = _make_gemini_client(
+        monkeypatch,
+        tmp_path,
+        {
+            "countTokens": make_gemini_count_response(),
+            "generateContent": [bad, good],
+        },
+    )
     result = await client.generate("Order fulfillment process.")
     assert result["session_name"] == "After Retry"
     # Two POSTs to generateContent (countTokens calls don't matter here).
@@ -253,10 +282,14 @@ async def test_generate_retries_on_missing_bpmn_xml_field(monkeypatch, tmp_path)
     """LLM returned valid JSON but no bpmn_xml — retry."""
     bad = make_gemini_response(text=json.dumps({"session_name": "Nope"}))
     good = _gemini_response_body(VALID_BPMN_XML_NO_DI, "OK")
-    client, seq = _make_gemini_client(monkeypatch, tmp_path, {
-        "countTokens": make_gemini_count_response(),
-        "generateContent": [bad, good],
-    })
+    client, seq = _make_gemini_client(
+        monkeypatch,
+        tmp_path,
+        {
+            "countTokens": make_gemini_count_response(),
+            "generateContent": [bad, good],
+        },
+    )
     result = await client.generate("Order fulfillment.")
     assert result["session_name"] == "OK"
 
@@ -267,14 +300,16 @@ async def test_generate_retries_on_invalid_bpmn(monkeypatch, tmp_path):
     retry with correction prompt."""
     broken_xml = """<?xml version="1.0"?>
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"/>"""
-    bad = make_gemini_response(
-        text=json.dumps({"bpmn_xml": broken_xml, "session_name": "Bad"})
-    )
+    bad = make_gemini_response(text=json.dumps({"bpmn_xml": broken_xml, "session_name": "Bad"}))
     good = _gemini_response_body(VALID_BPMN_XML_NO_DI, "Recovered")
-    client, seq = _make_gemini_client(monkeypatch, tmp_path, {
-        "countTokens": make_gemini_count_response(),
-        "generateContent": [bad, good],
-    })
+    client, seq = _make_gemini_client(
+        monkeypatch,
+        tmp_path,
+        {
+            "countTokens": make_gemini_count_response(),
+            "generateContent": [bad, good],
+        },
+    )
     result = await client.generate("Order fulfillment.")
     assert result["session_name"] == "Recovered"
 
@@ -307,13 +342,15 @@ async def test_generate_lane_guard_triggers_retry(monkeypatch, tmp_path):
 </bpmn:definitions>"""
     first_attempt = _gemini_response_body(VALID_BPMN_XML_NO_DI, "No Lanes")
     second_attempt = _gemini_response_body(lane_xml, "With Lanes")
-    client, seq = _make_gemini_client(monkeypatch, tmp_path, {
-        "countTokens": make_gemini_count_response(),
-        "generateContent": [first_attempt, second_attempt],
-    })
-    result = await client.generate(
-        "Используй роли: Менеджер создаёт заявку, Директор подписывает."
+    client, seq = _make_gemini_client(
+        monkeypatch,
+        tmp_path,
+        {
+            "countTokens": make_gemini_count_response(),
+            "generateContent": [first_attempt, second_attempt],
+        },
     )
+    result = await client.generate("Используй роли: Менеджер создаёт заявку, Директор подписывает.")
     assert "<bpmn:lane " in result["bpmn_xml"] or '<bpmn:lane id="' in result["bpmn_xml"]
     gen_calls = [r for r in seq.requests if "generateContent" in str(r.url)]
     assert len(gen_calls) == 2, "lane guard should trigger one retry"
@@ -325,10 +362,14 @@ async def test_generate_lane_guard_falls_back_after_max_retries(monkeypatch, tmp
     lane-less result rather than 500-ing — the diagram is at least
     structurally valid."""
     plain = _gemini_response_body(VALID_BPMN_XML_NO_DI, "Lane-less")
-    client, _ = _make_gemini_client(monkeypatch, tmp_path, {
-        "countTokens": make_gemini_count_response(),
-        "generateContent": [plain, plain, plain],
-    })
+    client, _ = _make_gemini_client(
+        monkeypatch,
+        tmp_path,
+        {
+            "countTokens": make_gemini_count_response(),
+            "generateContent": [plain, plain, plain],
+        },
+    )
     result = await client.generate("Используй роли: Менеджер, Директор.")
     # Lane-less fallback path — must still return valid XML, not throw.
     assert "<bpmn:definitions" in result["bpmn_xml"]
@@ -346,10 +387,14 @@ async def test_generate_gives_up_after_max_retries_on_bad_xml(monkeypatch, tmp_p
             }
         )
     )
-    client, _ = _make_gemini_client(monkeypatch, tmp_path, {
-        "countTokens": make_gemini_count_response(),
-        "generateContent": [bad, bad, bad],
-    })
+    client, _ = _make_gemini_client(
+        monkeypatch,
+        tmp_path,
+        {
+            "countTokens": make_gemini_count_response(),
+            "generateContent": [bad, bad, bad],
+        },
+    )
     with pytest.raises(ValueError):
         await client.generate("Anything.")
 
@@ -364,10 +409,14 @@ async def test_generate_max_tokens_surfaces_clear_error(monkeypatch, tmp_path):
     """When Gemini hits MAX_TOKENS, the user-facing error names the
     actual fix (raise output / lower thinking)."""
     truncated = make_gemini_response(text="...", finish_reason="MAX_TOKENS")
-    client, _ = _make_gemini_client(monkeypatch, tmp_path, {
-        "countTokens": make_gemini_count_response(),
-        "generateContent": truncated,
-    })
+    client, _ = _make_gemini_client(
+        monkeypatch,
+        tmp_path,
+        {
+            "countTokens": make_gemini_count_response(),
+            "generateContent": truncated,
+        },
+    )
     with pytest.raises(LLMClientError) as ei:
         await client.generate("Anything.")
     msg = ei.value.message.lower()
@@ -376,10 +425,14 @@ async def test_generate_max_tokens_surfaces_clear_error(monkeypatch, tmp_path):
 
 @pytest.mark.asyncio
 async def test_generate_translates_500_to_llm_error(monkeypatch, tmp_path):
-    client, _ = _make_gemini_client(monkeypatch, tmp_path, {
-        "countTokens": make_gemini_count_response(),
-        "generateContent": (500, {"error": "boom"}),
-    })
+    client, _ = _make_gemini_client(
+        monkeypatch,
+        tmp_path,
+        {
+            "countTokens": make_gemini_count_response(),
+            "generateContent": (500, {"error": "boom"}),
+        },
+    )
     with pytest.raises(LLMClientError):
         await client.generate("Anything.")
 
@@ -402,9 +455,7 @@ async def test_polza_reasoning_effort_maps_from_thinking_budget(monkeypatch, tmp
         return httpx.Response(
             200,
             json=make_polza_response(
-                content=json.dumps(
-                    {"bpmn_xml": VALID_BPMN_XML_NO_DI, "session_name": "Z"}
-                )
+                content=json.dumps({"bpmn_xml": VALID_BPMN_XML_NO_DI, "session_name": "Z"})
             ),
         )
 
@@ -445,9 +496,13 @@ async def test_polza_402_daily_cap_emits_informative_error(monkeypatch, tmp_path
         },
         "trace_id": "test-trace",
     }
-    client, _ = _make_polza_client(monkeypatch, tmp_path, {
-        "chat/completions": (402, daily_cap_body),
-    })
+    client, _ = _make_polza_client(
+        monkeypatch,
+        tmp_path,
+        {
+            "chat/completions": (402, daily_cap_body),
+        },
+    )
     with pytest.raises(LLMClientError) as ei:
         await client.generate("Anything.")
     msg = ei.value.message
@@ -464,9 +519,13 @@ async def test_polza_402_generic_insufficient_emits_topup_hint(monkeypatch, tmp_
             "message": "Insufficient balance",
         },
     }
-    client, _ = _make_polza_client(monkeypatch, tmp_path, {
-        "chat/completions": (402, body),
-    })
+    client, _ = _make_polza_client(
+        monkeypatch,
+        tmp_path,
+        {
+            "chat/completions": (402, body),
+        },
+    )
     with pytest.raises(LLMClientError) as ei:
         await client.generate("Anything.")
     msg = ei.value.message
@@ -495,7 +554,9 @@ async def test_gemini_generate_payload_includes_response_schema(monkeypatch, tmp
         )
 
     backend = GeminiBackend(
-        api_key="dummy", model="gemini-3-flash-preview", max_output_tokens=4096,
+        api_key="dummy",
+        model="gemini-3-flash-preview",
+        max_output_tokens=4096,
     )
     monkeypatch.setattr(
         backend,

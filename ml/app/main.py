@@ -1,11 +1,12 @@
-import os
 import logging
+import os
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.budget import DailyBudgetExceededError, BudgetTracker
+from app.budget import BudgetTracker, DailyBudgetExceededError
 from app.config import (
     BPMN_XML_CHAR_LIMIT,
     DAILY_SPEND_LIMIT_USD,
@@ -21,7 +22,7 @@ from app.config import (
     get_input_price_per_million_usd,
     get_output_price_per_million_usd,
 )
-from app.llm import LLMClient, LLMClientError, GeminiBackend, PolzaBackend
+from app.llm import GeminiBackend, LLMClient, LLMClientError, PolzaBackend
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -46,7 +47,9 @@ async def lifespan(app: FastAPI):
 
     if LLM_BACKEND == "polza":
         if not POLZA_API_KEY:
-            raise RuntimeError("POLZA_API_KEY environment variable is required when LLM_BACKEND=polza")
+            raise RuntimeError(
+                "POLZA_API_KEY environment variable is required when LLM_BACKEND=polza"
+            )
         backend = PolzaBackend(
             api_key=POLZA_API_KEY,
             model=POLZA_MODEL,
@@ -57,7 +60,9 @@ async def lifespan(app: FastAPI):
     else:
         api_key = os.environ.get("GEMINI_API_KEY")
         if not api_key:
-            raise RuntimeError("GEMINI_API_KEY environment variable is required when LLM_BACKEND=gemini")
+            raise RuntimeError(
+                "GEMINI_API_KEY environment variable is required when LLM_BACKEND=gemini"
+            )
         backend = GeminiBackend(
             api_key=api_key,
             model=model,
@@ -162,16 +167,16 @@ async def classify(request: ClassifyRequest):
         return ClassifyResponse(**result)
     except DailyBudgetExceededError as exc:
         logger.warning("Classification blocked by budget cap: %s", exc)
-        raise HTTPException(status_code=429, detail=str(exc))
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
     except LLMClientError as exc:
         logger.error("Classification failed: %s", exc)
         # Pass the backend's message through (e.g. "Polza credits exhausted…")
         # so operators see the root cause instead of a generic "Processing
         # failed" — matches /generate and /edit behavior for consistency.
-        raise HTTPException(status_code=exc.status_code, detail=str(exc))
-    except Exception:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    except Exception as exc:
         logger.exception("Classification failed unexpectedly")
-        raise HTTPException(status_code=500, detail="Processing failed.")
+        raise HTTPException(status_code=500, detail="Processing failed.") from exc
 
 
 @app.post("/generate", response_model=GenerateResponse)
@@ -181,13 +186,13 @@ async def generate(request: GenerateRequest):
         return GenerateResponse(**result)
     except DailyBudgetExceededError as exc:
         logger.warning("Generation blocked by budget cap: %s", exc)
-        raise HTTPException(status_code=429, detail=str(exc))
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
     except LLMClientError as exc:
         logger.error("Generation failed: %s", exc)
-        raise HTTPException(status_code=exc.status_code, detail=str(exc))
-    except Exception:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    except Exception as exc:
         logger.exception("Generation failed unexpectedly")
-        raise HTTPException(status_code=500, detail="Processing failed.")
+        raise HTTPException(status_code=500, detail="Processing failed.") from exc
 
 
 @app.post("/edit", response_model=EditResponse)
@@ -197,10 +202,10 @@ async def edit(request: EditRequest):
         return EditResponse(**result)
     except DailyBudgetExceededError as exc:
         logger.warning("Edit blocked by budget cap: %s", exc)
-        raise HTTPException(status_code=429, detail=str(exc))
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
     except LLMClientError as exc:
         logger.error("Edit failed: %s", exc)
-        raise HTTPException(status_code=exc.status_code, detail=str(exc))
-    except Exception:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    except Exception as exc:
         logger.exception("Edit failed unexpectedly")
-        raise HTTPException(status_code=500, detail="Processing failed.")
+        raise HTTPException(status_code=500, detail="Processing failed.") from exc
