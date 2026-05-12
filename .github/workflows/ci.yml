@@ -179,11 +179,14 @@ jobs:
             echo "::error::Unknown LLM_BACKEND='$backend' in .env.prod (expected 'gemini' or 'polza')."
             exit 1
           fi
-      - name: Copy .env and docker-compose.yml to server
+      - name: Copy .env, docker-compose.yml, and infra/ to server
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          source: ".env,docker-compose.yml"
+          # `infra/` holds Loki/Promtail/Grafana provisioning that
+          # docker-compose mounts read-only into the observability
+          # containers. Without it those services fail to start.
+          source: ".env,docker-compose.yml,infra"
           target: /opt/bpmn-project/
