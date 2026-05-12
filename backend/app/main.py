@@ -53,7 +53,9 @@ MAX_SESSIONS_PER_USER = 50
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global ml_http_client, session_signing_secret
-    await init_db()
+    # Schema is managed by alembic at deploy time
+    # (`alembic upgrade head`). No metadata.create_all in prod —
+    # see `backend/alembic/` and `backend/app/database.py`.
 
     headers = {}
     if INTERNAL_API_KEY:
