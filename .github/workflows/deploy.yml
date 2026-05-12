@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       service:
-        description: "Service to deploy ('all' = full bring-up; 'clean-infra' = remove stale infra/ dirs created by failed mounts; otherwise per-service)"
+        description: "Service to deploy ('all' = full bring-up; 'verify' = check health endpoints + Loki ingestion; 'clean-infra' = remove stale mount-source dirs; otherwise per-service)"
         required: true
         type: choice
         options:
@@ -17,6 +17,7 @@ on:
           - promtail
           - grafana
           - clean-infra
+          - verify
 
 jobs:
   deploy:
@@ -47,12 +48,36 @@ jobs:
               # Cleanup for the case where a previous deploy failed
               # because Docker auto-created mount source paths as
               # directories (e.g. infra/loki/config.yaml as a dir).
-              # Stops the affected services, drops the bad dirs, and
-              # exits — next "all" deploy will scp the real files.
               docker compose stop loki promtail grafana 2>/dev/null || true
               docker compose rm -f loki promtail grafana 2>/dev/null || true
               sudo rm -rf infra
               echo "infra/ cleaned. Re-run prepare-server (push any commit) then deploy 'all'."
+            elif [ "${{ inputs.service }}" = "verify" ]; then
+              # Smoke-test prod: check /health on backend + ml, then
+              # confirm Loki is ingesting log streams from the app
+              # services. Surfaces any boot-time alembic or LLM
+              # backend mis-config before users notice.
+              echo "=== docker compose ps ==="
+              docker compose ps
+              echo ""
+              echo "=== backend /health (via frontend nginx) ==="
+              docker compose exec -T backend python -c \
+                'import urllib.request; print(urllib.request.urlopen("http://localhost:8000/health").read().decode())'
+              echo ""
+              echo "=== ml /health ==="
+              docker compose exec -T ml python -c \
+                'import urllib.request; print(urllib.request.urlopen("http://localhost:8001/health").read().decode())'
+              echo ""
+              echo "=== Loki labels (proves ingestion) ==="
+              docker compose exec -T promtail wget -qO- http://loki:3100/loki/api/v1/labels
+              echo ""
+              echo "=== Backend recent log lines from Loki ==="
+              docker compose exec -T promtail wget -qO- \
+                "http://loki:3100/loki/api/v1/query_range?query=%7Bjob%3D%22bpmn-backend%22%7D&limit=3" \
+                | head -c 600
+              echo ""
+              echo "=== Backend alembic startup state ==="
+              docker compose logs backend 2>&1 | grep -E "entrypoint|alembic|Started server" | head -10
             else
               # Per-service redeploy (no-deps avoids restarting db etc.)
               docker compose pull ${{ inputs.service }}
