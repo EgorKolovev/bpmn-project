@@ -522,7 +522,8 @@ class TestInputValidation:
         assert not mock_ml.requests
 
     async def test_oversized_text_rejected(self, fake_sio, mock_ml):
-        from app.main import MAX_MESSAGE_CHARS, handle_action
+        from app.config import MAX_MESSAGE_CHARS
+        from app.main import handle_action
 
         mock_ml.set({"/classify": _ok_classify(), "/generate": _ok_generate()})
         await _seed_init("sid-iv2", fake_sio)
@@ -876,17 +877,15 @@ class TestSessionReconnect:
         ), "server trusted a forged user_id with a bad token"
 
     async def test_reconnect_with_expired_token_creates_fresh_identity(self, fake_sio, mock_ml):
-        """Tokens carry an HMAC over (user_id, issued_at) and the server
-        rejects anything older than 7 days. Forge a token from 8 days
-        ago with the right HMAC; server must still refuse it."""
+        """Tokens carry an `exp` JWT claim; the server rejects anything
+        whose `exp` is in the past. Forge an expired JWT with the right
+        HMAC signature; server must still refuse it."""
         import time as _time
 
+        import jwt
+
         from app.main import connect, handle_action
-        from app.security import (
-            DEFAULT_MAX_AGE_SECONDS,
-            TOKEN_VERSION,
-            _compute_signature,
-        )
+        from app.security import DEFAULT_MAX_AGE_SECONDS, JWT_ALGORITHM
 
         # Get a real user_id from a valid init.
         await connect("sid-orig", {}, None)
@@ -894,10 +893,14 @@ class TestSessionReconnect:
         original_user_id = fake_sio.first("init_data")["user_id"]
         fake_sio.clear()
 
-        # Craft an "expired" token using the test signing secret.
-        old_ts = int(_time.time()) - (DEFAULT_MAX_AGE_SECONDS + 86400)
-        sig = _compute_signature(uuid.UUID(original_user_id), old_ts, "test-signing-secret")
-        expired_token = f"{TOKEN_VERSION}.{old_ts}.{sig}"
+        # Craft an "expired" JWT signed with the test signing secret.
+        now = int(_time.time())
+        expired_payload = {
+            "sub": original_user_id,
+            "iat": now - (DEFAULT_MAX_AGE_SECONDS + 86400),  # 8 days ago
+            "exp": now - 86400,  # expired 1 day ago
+        }
+        expired_token = jwt.encode(expired_payload, "test-signing-secret", algorithm=JWT_ALGORITHM)
 
         await connect(
             "sid-stale",

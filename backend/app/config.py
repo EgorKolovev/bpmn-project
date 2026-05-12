@@ -6,8 +6,10 @@ exported under their UPPER_SNAKE_CASE names — every existing import
 (`from app.config import DATABASE_URL`, etc.) keeps working.
 """
 
+from typing import Annotated
+
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 _DEFAULT_CORS_ORIGINS = [
     "http://localhost",
@@ -36,7 +38,13 @@ class Settings(BaseSettings):
     session_secret_file: str = Field(default="/data/session_secret.txt")
     internal_api_key: str = Field(default="")
     session_token_max_age_days: int = Field(default=7)
-    cors_allowed_origins: list[str] = Field(default_factory=lambda: list(_DEFAULT_CORS_ORIGINS))
+    # `NoDecode` tells pydantic-settings NOT to JSON-decode the raw
+    # env-var value (default list-field behaviour would try and fail
+    # on "http://a,http://b"). The `@field_validator(mode="before")`
+    # below receives the raw string and does the comma split itself.
+    cors_allowed_origins: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: list(_DEFAULT_CORS_ORIGINS)
+    )
 
     model_config = SettingsConfigDict(
         env_file=None,

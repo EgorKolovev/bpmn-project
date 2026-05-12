@@ -1,14 +1,24 @@
-import base64
-import hashlib
-import hmac
+"""Session tokens — JWT (HS256) over the user UUID.
+
+We issue and verify HS256 JWTs with `sub = user_id`, `iat`, and `exp`
+claims. The shared secret is loaded from `SESSION_SECRET` env var or
+`SESSION_SECRET_FILE` on disk (with `O_CREAT | 0o600` mode for fresh
+installs).
+
+The frontend stores the opaque token blob in localStorage and resends
+it via Socket.IO handshake `auth`; on reconnect we verify the
+signature and the `sub` claim must match the claimed `user_id`.
+"""
+
 import os
 import secrets
-import time
 from datetime import timedelta
 from pathlib import Path
 from uuid import UUID
 
-TOKEN_VERSION = "v2"
+import jwt
+
+JWT_ALGORITHM = "HS256"
 DEFAULT_MAX_AGE_SECONDS = int(timedelta(days=7).total_seconds())
 
 
@@ -33,20 +43,26 @@ def load_or_create_session_secret(
     return secret
 
 
-def _compute_signature(user_id: UUID, issued_at: int, secret: str) -> str:
-    message = f"{user_id}:{issued_at}".encode()
-    digest = hmac.new(
-        secret.encode("utf-8"),
-        message,
-        hashlib.sha256,
-    ).digest()
-    return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+def issue_session_token(
+    user_id: UUID,
+    secret: str,
+    *,
+    max_age_seconds: int = DEFAULT_MAX_AGE_SECONDS,
+) -> str:
+    """Issue an HS256 JWT containing `sub=user_id`, `iat`, `exp`.
 
+    Uses integer-seconds for `iat` / `exp` to match RFC 7519 §2 NumericDate
+    expectations and stay free of pyjwt's `datetime.utcnow` deprecation.
+    """
+    import time
 
-def issue_session_token(user_id: UUID, secret: str) -> str:
-    issued_at = int(time.time())
-    sig = _compute_signature(user_id, issued_at, secret)
-    return f"{TOKEN_VERSION}.{issued_at}.{sig}"
+    now = int(time.time())
+    payload = {
+        "sub": str(user_id),
+        "iat": now,
+        "exp": now + max_age_seconds,
+    }
+    return jwt.encode(payload, secret, algorithm=JWT_ALGORITHM)
 
 
 def verify_session_token(
@@ -55,25 +71,23 @@ def verify_session_token(
     secret: str,
     max_age_seconds: int = DEFAULT_MAX_AGE_SECONDS,
 ) -> bool:
+    """Return True iff `token` is a valid HS256 JWT issued for `user_id`
+    that has not yet expired (`exp` claim).
+
+    `max_age_seconds` is accepted for backwards compatibility with the
+    previous HMAC API but is unused — the token's own `exp` claim is
+    authoritative. Tokens are issued with `exp = now + DEFAULT_MAX_AGE_SECONDS`
+    in `issue_session_token`, so changing this argument on verify has no
+    effect (kept for call-site stability).
+    """
     if not token or not isinstance(token, str):
         return False
 
-    parts = token.split(".")
-    if len(parts) != 3:
-        return False
-
-    version, issued_at_str, signature = parts
-    if version != TOKEN_VERSION:
-        return False
-
     try:
-        issued_at = int(issued_at_str)
-    except ValueError:
+        decoded = jwt.decode(token, secret, algorithms=[JWT_ALGORITHM])
+    except jwt.ExpiredSignatureError:
+        return False
+    except jwt.InvalidTokenError:
         return False
 
-    # Check expiration
-    if time.time() - issued_at > max_age_seconds:
-        return False
-
-    expected_signature = _compute_signature(user_id, issued_at, secret)
-    return hmac.compare_digest(signature, expected_signature)
+    return decoded.get("sub") == str(user_id)
