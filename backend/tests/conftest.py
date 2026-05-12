@@ -240,7 +240,7 @@ async def socketio_conversation(backend_url):
     """
     sio = socketio.AsyncClient(reconnection=False)
     convo = SocketConversation(sio)
-    await sio.connect(backend_url, socketio_path="/socket.io")
+    await sio.connect(backend_url, socketio_path="/ws")
     try:
         await convo.send({"action": "init"})
         init = await convo.wait_for_action("init_data", timeout=TIMEOUTS.SOCKETIO_INIT)

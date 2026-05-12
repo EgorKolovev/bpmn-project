@@ -82,7 +82,7 @@ async def test_websocket_reconnect_restores_user_session(backend_url):
     # --- Client A: init + create a session ---
     client_a = socketio.AsyncClient(reconnection=False)
     convo_a = SocketConversation(client_a)
-    await client_a.connect(backend_url, socketio_path="/socket.io")
+    await client_a.connect(backend_url, socketio_path="/ws")
     try:
         await convo_a.send({"action": "init"})
         first_init = await convo_a.wait_for_action("init_data", timeout=TIMEOUTS.SOCKETIO_INIT)
@@ -111,7 +111,7 @@ async def test_websocket_reconnect_restores_user_session(backend_url):
     convo_b = SocketConversation(client_b)
     await client_b.connect(
         backend_url,
-        socketio_path="/socket.io",
+        socketio_path="/ws",
         auth={"user_id": user_id, "session_token": session_token},
     )
     try:

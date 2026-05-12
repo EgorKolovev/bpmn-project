@@ -15,7 +15,10 @@ import httpx
 import socketio
 import structlog
 from aiolimiter import AsyncLimiter
-from fastapi import FastAPI
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.routing import Route
 
 from app.config import (
     CORS_ALLOWED_ORIGINS,
@@ -51,7 +54,7 @@ MAX_SESSIONS_PER_USER = 50
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: Starlette):
     global ml_http_client, session_signing_secret
     # Schema is managed by alembic at deploy time
     # (`alembic upgrade head`). No metadata.create_all in prod —
@@ -78,7 +81,14 @@ async def lifespan(app: FastAPI):
     logger.info("Backend shut down")
 
 
-app = FastAPI(title="BPMN Backend", version="1.0.0", lifespan=lifespan)
+async def health(request: Request) -> JSONResponse:
+    return JSONResponse({"status": "ok"})
+
+
+app = Starlette(
+    routes=[Route("/health", health, methods=["GET"])],
+    lifespan=lifespan,
+)
 
 sio = socketio.AsyncServer(
     async_mode="asgi",
@@ -88,12 +98,11 @@ sio = socketio.AsyncServer(
     max_http_buffer_size=1_000_000,  # 1MB max message size
 )
 
-combined_app = socketio.ASGIApp(sio, app, socketio_path="/socket.io")
-
-
-@app.get("/health")
-async def health():
-    return {"status": "ok"}
+# Socket.IO mount point: `/ws`. Previously `/socket.io` — switching
+# to `/ws` per the code-review request. Frontend client must set
+# `path: "/ws"` in its socket.io-client init; in-flight cached
+# clients on the old path will force-disconnect + reconnect once.
+combined_app = socketio.ASGIApp(sio, app, socketio_path="/ws")
 
 
 # `from app.handlers import ...` MUST run after the module globals
