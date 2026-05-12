@@ -29,8 +29,21 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Override the placeholder URL from alembic.ini with the real one.
-config.set_main_option("sqlalchemy.url", settings.database_url)
+# Resolve DB URL with this precedence:
+#   1. Already-set on the alembic Config (programmatic callers like
+#      `tests/test_migrations.py` set it via `cfg.set_main_option`).
+#   2. `DATABASE_URL` env var (current process state — respects
+#      `monkeypatch.setenv` in tests).
+#   3. `settings.database_url` (the cached pydantic-settings value).
+#
+# Without rule #2, tests that monkeypatch `DATABASE_URL` are silently
+# ignored because `settings` is instantiated at app-import time.
+_existing = config.get_main_option("sqlalchemy.url")
+if not _existing or _existing.startswith("driver://"):
+    config.set_main_option(
+        "sqlalchemy.url",
+        os.environ.get("DATABASE_URL") or settings.database_url,
+    )
 
 target_metadata = Base.metadata
 
