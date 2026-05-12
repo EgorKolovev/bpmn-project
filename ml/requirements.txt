@@ -3,4 +3,5 @@ uvicorn[standard]==0.34.0
 httpx==0.28.1
 pydantic==2.10.4
 structlog==24.4.0
+sqlalchemy==2.0.36
 defusedxml==0.7.1
