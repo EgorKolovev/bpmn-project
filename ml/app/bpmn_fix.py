@@ -11,36 +11,36 @@ from typing import Any
 
 from defusedxml import ElementTree as SafeET
 
+from app.bpmn_constants import BPMN_NS, NON_FLOW_NODE_TAGS
+
 logger = logging.getLogger(__name__)
 
-BPMN_NS = "http://www.omg.org/spec/BPMN/20100524/MODEL"
 
-# Tags that are NOT flow nodes — everything else with an id is treated as one
-NON_FLOW_NODE_TAGS = {
-    "sequenceFlow",
-    "messageFlow",
-    "association",
-    "dataObject",
-    "dataObjectReference",
-    "dataStoreReference",
-    "textAnnotation",
-    "incoming",
-    "outgoing",
-    "documentation",
-    "extensionElements",
-    "conditionExpression",
-    "multiInstanceLoopCharacteristics",
-    "standardLoopCharacteristics",
-    "ioSpecification",
-    "dataInput",
-    "dataOutput",
-    "inputSet",
-    "outputSet",
-    "property",
-    "laneSet",
-    "lane",
-    "flowNodeRef",
-}
+def _append_flow_refs(
+    elem: Any,
+    process_ns: str,
+    flow_ids: list[str],
+    tag: str,
+    start_idx: int,
+) -> int:
+    """Append `<bpmn:incoming>` or `<bpmn:outgoing>` children to `elem`,
+    each carrying one flow id, starting at `start_idx` in the child list.
+
+    The SubElement → remove → insert dance is the documented trick to
+    create a child WITH the right namespace AND control its position.
+    Returns the index where the next caller should continue inserting.
+    """
+    idx = start_idx
+    for flow_id in flow_ids:
+        ref = XmlET.SubElement(
+            elem,
+            f"{{{process_ns}}}{tag}" if process_ns else tag,
+        )
+        ref.text = flow_id
+        elem.remove(ref)
+        elem.insert(idx, ref)
+        idx += 1
+    return idx
 
 
 def _get_local_tag(elem: Any) -> str:
@@ -122,27 +122,9 @@ def ensure_incoming_outgoing(xml_string: str) -> str:
         incoming_flows = incoming_map.get(elem_id, [])
         outgoing_flows = outgoing_map.get(elem_id, [])
 
-        # Insert incoming first, then outgoing (standard BPMN ordering)
-        insert_idx = 0
-        for flow_id in incoming_flows:
-            inc_elem = XmlET.SubElement(
-                elem,
-                f"{{{process_ns}}}incoming" if process_ns else "incoming",
-            )
-            inc_elem.text = flow_id
-            elem.remove(inc_elem)
-            elem.insert(insert_idx, inc_elem)
-            insert_idx += 1
-
-        for flow_id in outgoing_flows:
-            out_elem = XmlET.SubElement(
-                elem,
-                f"{{{process_ns}}}outgoing" if process_ns else "outgoing",
-            )
-            out_elem.text = flow_id
-            elem.remove(out_elem)
-            elem.insert(insert_idx, out_elem)
-            insert_idx += 1
+        # Insert incoming first, then outgoing (standard BPMN ordering).
+        insert_idx = _append_flow_refs(elem, process_ns, incoming_flows, "incoming", 0)
+        _append_flow_refs(elem, process_ns, outgoing_flows, "outgoing", insert_idx)
 
     # Serialize back to string
     XmlET.register_namespace("bpmn", BPMN_NS)

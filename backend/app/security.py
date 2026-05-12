@@ -4,11 +4,12 @@ import hmac
 import os
 import secrets
 import time
+from datetime import timedelta
 from pathlib import Path
 from uuid import UUID
 
 TOKEN_VERSION = "v2"
-DEFAULT_MAX_AGE_SECONDS = 7 * 24 * 3600  # 7 days
+DEFAULT_MAX_AGE_SECONDS = int(timedelta(days=7).total_seconds())
 
 
 def load_or_create_session_secret(
