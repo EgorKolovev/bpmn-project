@@ -8,8 +8,6 @@ from typing import Any
 import httpx
 import socketio
 from fastapi import FastAPI
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 
 from app.config import (
     CORS_ALLOWED_ORIGINS,
@@ -20,7 +18,7 @@ from app.config import (
     SESSION_SECRET_FILE,
 )
 from app.database import async_session, init_db
-from app.models import Message, Session
+from app.repositories import MessageRepository, SessionRepository
 from app.security import (
     issue_session_token,
     load_or_create_session_secret,
@@ -241,13 +239,7 @@ async def handle_init(sid, data):
     user_id, session_token = await _resolve_user_identity(sid, data)
 
     async with async_session() as db:
-        result = await db.execute(
-            select(Session)
-            .where(Session.user_id == user_id)
-            .order_by(Session.updated_at.desc())
-            .limit(MAX_SESSIONS_PER_USER)
-        )
-        sessions = result.scalars().all()
+        sessions = await SessionRepository(db).list_for_user(user_id, MAX_SESSIONS_PER_USER)
 
     sessions_list = [
         {"session_id": str(session.id), "name": session.name or "Untitled"} for session in sessions
@@ -274,12 +266,7 @@ async def handle_open_session(sid, data):
     session_uuid = _parse_uuid(session_id, "session_id")
 
     async with async_session() as db:
-        result = await db.execute(
-            select(Session)
-            .options(selectinload(Session.messages))
-            .where(Session.id == session_uuid, Session.user_id == user_id)
-        )
-        session = result.scalar_one_or_none()
+        session = await SessionRepository(db).get_with_messages(session_uuid, user_id)
 
     if not session:
         raise ClientInputError("Session not found.")
@@ -340,6 +327,9 @@ async def handle_message(sid, data):
     await _classify_input(text)
 
     async with async_session() as db:
+        sessions = SessionRepository(db)
+        messages = MessageRepository(db)
+
         if is_new_session:
             try:
                 ml_response = await ml_http_client.post(
@@ -364,33 +354,15 @@ async def handle_message(sid, data):
                 return
 
             new_session_id = uuid.uuid4()
-
-            session = Session(
-                id=new_session_id,
+            session = sessions.add_new(
+                session_id=new_session_id,
                 user_id=user_id,
                 name=session_name,
-                current_bpmn_xml=bpmn_xml,
+                bpmn_xml=bpmn_xml,
             )
-            db.add(session)
             await db.flush()
-
-            db.add(
-                Message(
-                    session_id=new_session_id,
-                    role="user",
-                    text=text,
-                    order=0,
-                )
-            )
-            db.add(
-                Message(
-                    session_id=new_session_id,
-                    role="assistant",
-                    bpmn_xml=bpmn_xml,
-                    order=1,
-                )
-            )
-
+            messages.add_user_message(session_id=new_session_id, text=text, order=0)
+            messages.add_assistant_message(session_id=new_session_id, bpmn_xml=bpmn_xml, order=1)
             await db.commit()
 
             await sio.emit(
@@ -405,12 +377,7 @@ async def handle_message(sid, data):
             )
             return
 
-        result = await db.execute(
-            select(Session)
-            .options(selectinload(Session.messages))
-            .where(Session.id == session_uuid, Session.user_id == user_id)
-        )
-        session = result.scalar_one_or_none()
+        session = await sessions.get_with_messages(session_uuid, user_id)
 
         if not session:
             raise ClientInputError("Session not found.")
@@ -440,26 +407,11 @@ async def handle_message(sid, data):
             return
 
         msg_count = len(session.messages)
-
-        db.add(
-            Message(
-                session_id=session.id,
-                role="user",
-                text=text,
-                order=msg_count,
-            )
+        messages.add_user_message(session_id=session.id, text=text, order=msg_count)
+        messages.add_assistant_message(
+            session_id=session.id, bpmn_xml=bpmn_xml, order=msg_count + 1
         )
-        db.add(
-            Message(
-                session_id=session.id,
-                role="assistant",
-                bpmn_xml=bpmn_xml,
-                order=msg_count + 1,
-            )
-        )
-
-        session.current_bpmn_xml = bpmn_xml
-        db.add(session)
+        sessions.update_current_bpmn(session, bpmn_xml)
         await db.commit()
 
         await sio.emit(
