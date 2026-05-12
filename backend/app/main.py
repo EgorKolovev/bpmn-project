@@ -10,12 +10,11 @@ that's the seam tests rely on (every existing
 """
 
 import logging
-import time
-from collections import defaultdict
 from contextlib import asynccontextmanager
 
 import httpx
 import socketio
+from aiolimiter import AsyncLimiter
 from fastapi import FastAPI
 
 from app.config import (
@@ -38,8 +37,12 @@ logger = logging.getLogger(__name__)
 ml_http_client: httpx.AsyncClient | None = None
 session_signing_secret: str | None = None
 
-# Rate limiting: track timestamps per SID.
-_rate_limit_map: dict[str, list] = defaultdict(list)
+# Rate limiting: one `aiolimiter.AsyncLimiter` per SID, lazily created.
+# `AsyncLimiter(N, W)` = "up to N actions per W seconds". We use
+# `has_capacity()` (sync, atomic in single-threaded asyncio) to test
+# *before* acquiring, so the user gets an immediate `error` event
+# instead of a coroutine that silently blocks until capacity frees.
+_rate_limit_map: dict[str, AsyncLimiter] = {}
 RATE_LIMIT_WINDOW = 10  # seconds
 RATE_LIMIT_MAX = 5  # max messages per window
 
@@ -122,14 +125,24 @@ async def disconnect(sid):
     logger.info("Client disconnected: %s", sid)
 
 
-def _check_rate_limit(sid: str) -> None:
-    now = time.time()
-    timestamps = _rate_limit_map[sid]
-    # Remove old entries outside window.
-    _rate_limit_map[sid] = [t for t in timestamps if now - t < RATE_LIMIT_WINDOW]
-    if len(_rate_limit_map[sid]) >= RATE_LIMIT_MAX:
+async def _check_rate_limit(sid: str) -> None:
+    """Per-SID token-bucket rate limit. Raises `ClientInputError` if the
+    SID has already used `RATE_LIMIT_MAX` actions in the last
+    `RATE_LIMIT_WINDOW` seconds.
+
+    Note: `AsyncLimiter.acquire()` would *block* until a slot frees —
+    that's the wrong UX for our chat-style flow. We probe with
+    `has_capacity()` first (sync, atomic in single-threaded asyncio)
+    and only call `acquire()` when we know it will return immediately.
+    """
+    limiter = _rate_limit_map.get(sid)
+    if limiter is None:
+        limiter = AsyncLimiter(RATE_LIMIT_MAX, RATE_LIMIT_WINDOW)
+        _rate_limit_map[sid] = limiter
+
+    if not limiter.has_capacity():
         raise ClientInputError("Too many requests. Please wait a moment.")
-    _rate_limit_map[sid].append(now)
+    await limiter.acquire()
 
 
 @sio.on("new_action_event")
@@ -147,7 +160,7 @@ async def handle_action(sid, data):
         elif action == "open_session":
             await handle_open_session(sid, data)
         elif action == "message":
-            _check_rate_limit(sid)
+            await _check_rate_limit(sid)
             await handle_message(sid, data)
         else:
             raise ClientInputError("Unknown action.")
