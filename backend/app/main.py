@@ -1,9 +1,18 @@
+"""ASGI app entry point — wires FastAPI + Socket.IO, owns module-level
+globals (`sio`, `ml_http_client`, `session_signing_secret`, the rate
+limit map), and defines the dispatcher `handle_action`.
+
+The actual handler bodies live in `app.handlers`. They reach back into
+this module for `sio`, `async_session`, `ml_http_client`,
+`session_signing_secret`, and `MAX_SESSIONS_PER_USER` at call time —
+that's the seam tests rely on (every existing
+`monkeypatch.setattr(backend_main, "sio", fake)` keeps working).
+"""
+
 import logging
 import time
-import uuid
 from collections import defaultdict
 from contextlib import asynccontextmanager
-from typing import Any
 
 import httpx
 import socketio
@@ -12,18 +21,16 @@ from fastapi import FastAPI
 from app.config import (
     CORS_ALLOWED_ORIGINS,
     INTERNAL_API_KEY,
-    MAX_MESSAGE_CHARS,
     ML_SERVICE_URL,
     SESSION_SECRET,
     SESSION_SECRET_FILE,
 )
-from app.database import async_session, init_db
-from app.repositories import MessageRepository, SessionRepository
-from app.security import (
-    issue_session_token,
-    load_or_create_session_secret,
-    verify_session_token,
-)
+
+# `async_session` is re-exported so `app.handlers` can read
+# `_m.async_session` at call time and tests can `monkeypatch.setattr(
+# backend_main, "async_session", ...)` to swap it for a failing factory.
+from app.database import async_session, init_db  # noqa: F401  (re-export)
+from app.security import load_or_create_session_secret
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -31,16 +38,12 @@ logger = logging.getLogger(__name__)
 ml_http_client: httpx.AsyncClient | None = None
 session_signing_secret: str | None = None
 
-# Rate limiting: track timestamps per SID
+# Rate limiting: track timestamps per SID.
 _rate_limit_map: dict[str, list] = defaultdict(list)
 RATE_LIMIT_WINDOW = 10  # seconds
 RATE_LIMIT_MAX = 5  # max messages per window
 
 MAX_SESSIONS_PER_USER = 50
-
-
-class ClientInputError(Exception):
-    pass
 
 
 @asynccontextmanager
@@ -87,6 +90,19 @@ async def health():
     return {"status": "ok"}
 
 
+# `from app.handlers import ...` MUST run after the module globals
+# above (`sio`, `async_session`, etc.) are bound: handlers.py imports
+# `app.main` and reads them at call time, but importing handlers
+# before they exist would fail. Bottom of file = safest.
+from app.handlers import (  # noqa: E402  (intentional late import)
+    ClientInputError,
+    _emit_error,
+    handle_init,
+    handle_message,
+    handle_open_session,
+)
+
+
 @sio.event
 async def connect(sid, environ, auth):
     auth_payload = auth if isinstance(auth, dict) else {}
@@ -109,7 +125,7 @@ async def disconnect(sid):
 def _check_rate_limit(sid: str) -> None:
     now = time.time()
     timestamps = _rate_limit_map[sid]
-    # Remove old entries outside window
+    # Remove old entries outside window.
     _rate_limit_map[sid] = [t for t in timestamps if now - t < RATE_LIMIT_WINDOW]
     if len(_rate_limit_map[sid]) >= RATE_LIMIT_MAX:
         raise ClientInputError("Too many requests. Please wait a moment.")
@@ -141,284 +157,3 @@ async def handle_action(sid, data):
     except Exception:
         logger.exception("Error handling action '%s'", action)
         await _emit_error(sid, "Internal server error.")
-
-
-async def _emit_error(sid: str, message: str) -> None:
-    await sio.emit(
-        "new_action_event",
-        {
-            "action": "error",
-            "message": message,
-        },
-        to=sid,
-    )
-
-
-def _parse_uuid(value: Any, field_name: str) -> uuid.UUID:
-    try:
-        return uuid.UUID(str(value))
-    except (TypeError, ValueError, AttributeError) as exc:
-        raise ClientInputError(f"Invalid {field_name}.") from exc
-
-
-def _try_parse_uuid(value: Any) -> uuid.UUID | None:
-    if value in (None, ""):
-        return None
-    try:
-        return uuid.UUID(str(value))
-    except (TypeError, ValueError, AttributeError):
-        return None
-
-
-def _normalize_message_text(value: Any) -> str:
-    if not isinstance(value, str):
-        raise ClientInputError("Message text must be a string.")
-
-    text = value.strip()
-    if not text:
-        raise ClientInputError("Message text is required.")
-    if len(text) > MAX_MESSAGE_CHARS:
-        raise ClientInputError(f"Message text exceeds {MAX_MESSAGE_CHARS} characters.")
-    return text
-
-
-async def _resolve_user_identity(
-    sid: str,
-    data: dict[str, Any],
-) -> tuple[uuid.UUID, str]:
-    global session_signing_secret
-
-    if session_signing_secret is None:
-        raise RuntimeError("Session secret not initialized.")
-
-    socket_session = await sio.get_session(sid)
-    requested_user_id = socket_session.get("requested_user_id") or data.get("user_id")
-    requested_session_token = socket_session.get("requested_session_token") or data.get(
-        "session_token"
-    )
-
-    user_id = _try_parse_uuid(requested_user_id)
-    if user_id and verify_session_token(user_id, requested_session_token, session_signing_secret):
-        session_token = requested_session_token
-    else:
-        # Invalid/expired/missing token — always create fresh identity
-        if user_id and requested_session_token:
-            logger.warning("Invalid or expired session token for user %s", user_id)
-        user_id = uuid.uuid4()
-        session_token = issue_session_token(user_id, session_signing_secret)
-
-    await sio.save_session(
-        sid,
-        {
-            "user_id": str(user_id),
-            "session_token": session_token,
-            "requested_user_id": str(user_id),
-            "requested_session_token": session_token,
-        },
-    )
-    return user_id, session_token
-
-
-async def _get_bound_user_id(sid: str) -> uuid.UUID:
-    socket_session = await sio.get_session(sid)
-    user_id = socket_session.get("user_id")
-    if not user_id:
-        raise ClientInputError("Session not initialized.")
-    return _parse_uuid(user_id, "user_id")
-
-
-def _extract_ml_error_detail(exc: httpx.HTTPStatusError) -> str:
-    # Only return safe, generic messages to the client
-    if exc.response is not None and exc.response.status_code == 429:
-        return "Daily usage cap reached. Try again later."
-    logger.error("ML service error: status=%s", exc.response.status_code if exc.response else "N/A")
-    return "Processing failed. Please try again."
-
-
-async def handle_init(sid, data):
-    user_id, session_token = await _resolve_user_identity(sid, data)
-
-    async with async_session() as db:
-        sessions = await SessionRepository(db).list_for_user(user_id, MAX_SESSIONS_PER_USER)
-
-    sessions_list = [
-        {"session_id": str(session.id), "name": session.name or "Untitled"} for session in sessions
-    ]
-
-    await sio.emit(
-        "new_action_event",
-        {
-            "action": "init_data",
-            "user_id": str(user_id),
-            "session_token": session_token,
-            "sessions": sessions_list,
-        },
-        to=sid,
-    )
-
-
-async def handle_open_session(sid, data):
-    session_id = data.get("session_id")
-    if not session_id:
-        raise ClientInputError("session_id is required.")
-
-    user_id = await _get_bound_user_id(sid)
-    session_uuid = _parse_uuid(session_id, "session_id")
-
-    async with async_session() as db:
-        session = await SessionRepository(db).get_with_messages(session_uuid, user_id)
-
-    if not session:
-        raise ClientInputError("Session not found.")
-
-    history = []
-    for msg in sorted(session.messages, key=lambda message: message.order):
-        entry = {"role": msg.role}
-        if msg.role == "user":
-            entry["text"] = msg.text
-        else:
-            entry["bpmn_xml"] = msg.bpmn_xml
-        history.append(entry)
-
-    await sio.emit(
-        "new_action_event",
-        {
-            "action": "session_data",
-            "session_id": str(session.id),
-            "name": session.name or "Untitled",
-            "bpmn_xml": session.current_bpmn_xml or "",
-            "history": history,
-        },
-        to=sid,
-    )
-
-
-async def _classify_input(text: str) -> None:
-    """Call ML classify endpoint; raise ClientInputError if input is not BPMN-related."""
-    try:
-        response = await ml_http_client.post("/classify", json={"text": text})
-        response.raise_for_status()
-        result = response.json()
-        if not result.get("is_valid", False):
-            reason = result.get("reason", "")
-            msg = "This doesn't look like a business process description."
-            if reason:
-                msg += f" {reason}"
-            raise ClientInputError(msg)
-    except httpx.HTTPStatusError:
-        # If classification fails, let the request through rather than blocking
-        logger.warning("Classification endpoint returned error; skipping check")
-    except httpx.HTTPError:
-        logger.warning("Classification endpoint unreachable; skipping check")
-
-
-async def handle_message(sid, data):
-    text = _normalize_message_text(data.get("text"))
-    user_id = await _get_bound_user_id(sid)
-    raw_session_id = data.get("session_id")
-    if raw_session_id in (None, ""):
-        session_uuid = None
-        is_new_session = True
-    else:
-        session_uuid = _parse_uuid(raw_session_id, "session_id")
-        is_new_session = False
-
-    # Classify input before processing
-    await _classify_input(text)
-
-    async with async_session() as db:
-        sessions = SessionRepository(db)
-        messages = MessageRepository(db)
-
-        if is_new_session:
-            try:
-                ml_response = await ml_http_client.post(
-                    "/generate",
-                    json={"description": text},
-                )
-                ml_response.raise_for_status()
-                ml_data = ml_response.json()
-            except httpx.HTTPStatusError as exc:
-                await _emit_error(sid, _extract_ml_error_detail(exc))
-                return
-            except Exception:
-                logger.exception("ML service communication error")
-                await _emit_error(sid, "Processing failed. Please try again.")
-                return
-
-            bpmn_xml = ml_data.get("bpmn_xml", "")
-            session_name = ml_data.get("session_name", "Untitled")
-
-            if not bpmn_xml:
-                await _emit_error(sid, "Processing failed. Please try again.")
-                return
-
-            new_session_id = uuid.uuid4()
-            session = sessions.add_new(
-                session_id=new_session_id,
-                user_id=user_id,
-                name=session_name,
-                bpmn_xml=bpmn_xml,
-            )
-            await db.flush()
-            messages.add_user_message(session_id=new_session_id, text=text, order=0)
-            messages.add_assistant_message(session_id=new_session_id, bpmn_xml=bpmn_xml, order=1)
-            await db.commit()
-
-            await sio.emit(
-                "new_action_event",
-                {
-                    "action": "result",
-                    "bpmn_xml": bpmn_xml,
-                    "session_id": str(session.id),
-                    "session_name": session_name,
-                },
-                to=sid,
-            )
-            return
-
-        session = await sessions.get_with_messages(session_uuid, user_id)
-
-        if not session:
-            raise ClientInputError("Session not found.")
-
-        current_xml = session.current_bpmn_xml
-        if not current_xml:
-            raise ClientInputError("Session has no existing BPMN diagram.")
-
-        try:
-            ml_response = await ml_http_client.post(
-                "/edit",
-                json={"prompt": text, "bpmn_xml": current_xml},
-            )
-            ml_response.raise_for_status()
-            ml_data = ml_response.json()
-        except httpx.HTTPStatusError as exc:
-            await _emit_error(sid, _extract_ml_error_detail(exc))
-            return
-        except Exception:
-            logger.exception("ML service communication error")
-            await _emit_error(sid, "Processing failed. Please try again.")
-            return
-
-        bpmn_xml = ml_data.get("bpmn_xml", "")
-        if not bpmn_xml:
-            await _emit_error(sid, "Processing failed. Please try again.")
-            return
-
-        msg_count = len(session.messages)
-        messages.add_user_message(session_id=session.id, text=text, order=msg_count)
-        messages.add_assistant_message(
-            session_id=session.id, bpmn_xml=bpmn_xml, order=msg_count + 1
-        )
-        sessions.update_current_bpmn(session, bpmn_xml)
-        await db.commit()
-
-        await sio.emit(
-            "new_action_event",
-            {
-                "action": "result",
-                "bpmn_xml": bpmn_xml,
-            },
-            to=sid,
-        )
