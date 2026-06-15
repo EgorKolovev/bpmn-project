@@ -4,7 +4,7 @@ from typing import Any
 
 import httpx
 
-from app.config import GEMINI_THINKING_BUDGET
+from app.config import GEMINI_THINKING_BUDGET, LLM_HTTP_TIMEOUT
 from app.llm.errors import LLMClientError
 
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models"
@@ -16,10 +16,11 @@ class GeminiBackend:
     def __init__(self, api_key: str, model: str, max_output_tokens: int):
         self.model = model
         self.max_output_tokens = max_output_tokens
-        # 180s lets a complex request with thinkingBudget=2048 + long
-        # BPMN output complete without HTTP-level timeouts.
+        # Timeout is env-configurable (LLM_HTTP_TIMEOUT, default 240s) so a
+        # complex request with thinking + long BPMN output completes without
+        # an HTTP-level ReadTimeout. See config.LLM_HTTP_TIMEOUT.
         self.http_client = httpx.AsyncClient(
-            timeout=180.0,
+            timeout=LLM_HTTP_TIMEOUT,
             headers={"x-goog-api-key": api_key},
         )
 
@@ -28,14 +29,19 @@ class GeminiBackend:
         system_prompt: str,
         user_prompt: str,
         response_schema: dict[str, Any] | None = None,
+        thinking_budget: int | None = None,
     ) -> dict[str, Any]:
+        # Per-call override (edit/classify pass a lower budget than
+        # generate) → falls back to the module default.
+        budget = thinking_budget if thinking_budget is not None else GEMINI_THINKING_BUDGET
         generation_config: dict[str, Any] = {
             "temperature": 0.2,
             "maxOutputTokens": self.max_output_tokens,
             "responseMimeType": "application/json",
-            # Thinking budget — 0 off / -1 dynamic / >0 cap. See
-            # config.GEMINI_THINKING_BUDGET. Ignored by non-thinking models.
-            "thinkingConfig": {"thinkingBudget": GEMINI_THINKING_BUDGET},
+            # Thinking budget — 0 off / -1 dynamic / >0 cap. HARD cap on
+            # Gemini. See config.GEMINI_THINKING_BUDGET. Ignored by
+            # non-thinking models.
+            "thinkingConfig": {"thinkingBudget": budget},
         }
         if response_schema is not None:
             # Constrained decoding — forces the model to emit JSON matching
@@ -83,9 +89,10 @@ class GeminiBackend:
         system_prompt: str,
         user_prompt: str,
         response_schema: dict[str, Any] | None = None,
+        thinking_budget: int | None = None,
     ) -> tuple[str, int, int]:
         """Returns (text, prompt_tokens, output_tokens)."""
-        payload = self._build_payload(system_prompt, user_prompt, response_schema)
+        payload = self._build_payload(system_prompt, user_prompt, response_schema, thinking_budget)
         response = await self.http_client.post(
             f"{GEMINI_API_URL}/{self.model}:generateContent",
             json=payload,

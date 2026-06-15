@@ -180,7 +180,13 @@ class TestCharLimitRaised:
 class TestPolzaReasoningMapping:
     """Polza's OpenAI-compatible surface uses `reasoning.effort` enum
     instead of Gemini's `thinkingBudget` token count. We map between
-    the two so operators can tune one knob regardless of backend."""
+    the two so operators can tune one knob regardless of backend.
+
+    Buckets are deliberately conservative: on Polza `effort` is NOT
+    token-capped, and gemini-3-flash-preview at `medium` reasoned for
+    ~65K tokens / ~218s → HTTP timeout → 502 (prod incident 2026-06-14).
+    So only a very large budget maps to medium/high.
+    """
 
     def test_zero_disables_reasoning(self):
         from app.llm import _map_budget_to_effort
@@ -200,28 +206,31 @@ class TestPolzaReasoningMapping:
         assert _map_budget_to_effort(512) == "low"
         assert _map_budget_to_effort(1024) == "low"
         assert _map_budget_to_effort(2048) == "low"
+        # 4096 (the default budget) is intentionally "low" — see class docstring.
+        assert _map_budget_to_effort(4096) == "low"
 
     def test_medium_bucket(self):
         from app.llm import _map_budget_to_effort
 
-        assert _map_budget_to_effort(2049) == "medium"
-        assert _map_budget_to_effort(4096) == "medium"
-        assert _map_budget_to_effort(5000) == "medium"
+        assert _map_budget_to_effort(4097) == "medium"
+        assert _map_budget_to_effort(8192) == "medium"
+        assert _map_budget_to_effort(12288) == "medium"
 
     def test_high_bucket(self):
         from app.llm import _map_budget_to_effort
 
-        assert _map_budget_to_effort(5001) == "high"
-        assert _map_budget_to_effort(8000) == "high"
+        assert _map_budget_to_effort(12289) == "high"
         assert _map_budget_to_effort(16384) == "high"
+        assert _map_budget_to_effort(32768) == "high"
 
-    def test_default_budget_maps_to_medium(self):
-        """Current default (4096) should map to `medium` effort —
-        that's what PDF benchmarks were validated with."""
+    def test_default_budget_maps_to_low(self):
+        """The default budget (4096) MUST map to `low` effort. Anything
+        higher on Polza risks the unbounded-reasoning runaway that
+        caused the 2026-06-14 edit/generate 502s."""
         from app import config
         from app.llm import _map_budget_to_effort
 
-        assert _map_budget_to_effort(config.GEMINI_THINKING_BUDGET) == "medium"
+        assert _map_budget_to_effort(config.GEMINI_THINKING_BUDGET) == "low"
 
 
 class TestPolza402Translation:

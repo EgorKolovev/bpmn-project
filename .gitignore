@@ -61,3 +61,5 @@ ansible/inventory/hosts.yml
 
 # Claude Code project metadata
 .claude/
+# SQLite test artifacts
+*.db

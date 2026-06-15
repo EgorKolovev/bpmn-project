@@ -23,6 +23,7 @@ from starlette.routing import Route
 from app.config import (
     CORS_ALLOWED_ORIGINS,
     INTERNAL_API_KEY,
+    ML_HTTP_TIMEOUT,
     ML_SERVICE_URL,
     SESSION_SECRET,
     SESSION_SECRET_FILE,
@@ -66,9 +67,10 @@ async def lifespan(app: Starlette):
 
     ml_http_client = httpx.AsyncClient(
         base_url=ML_SERVICE_URL,
-        # 240s — longer than the ML service's own 180s httpx timeout so
-        # we never cut off a legitimate LLM call from the outside.
-        timeout=240.0,
+        # Env-configurable (ML_HTTP_TIMEOUT, default 300s) — kept LONGER
+        # than the ml service's own LLM_HTTP_TIMEOUT (default 240s) so we
+        # never cut off a legitimate in-flight LLM call from the outside.
+        timeout=ML_HTTP_TIMEOUT,
         headers=headers,
     )
     session_signing_secret = load_or_create_session_secret(

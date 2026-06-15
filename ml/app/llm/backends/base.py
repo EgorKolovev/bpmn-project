@@ -28,7 +28,11 @@ class Backend(Protocol):
         system_prompt: str,
         user_prompt: str,
         response_schema: dict[str, Any] | None = None,
-    ) -> tuple[str, int, int]: ...
+        thinking_budget: int | None = None,
+    ) -> tuple[str, int, int]:
+        """`thinking_budget` overrides the module-default per call (e.g.
+        edit/classify pass a lower budget than generate). None → default."""
+        ...
 
     def translate_http_error(self, exc: httpx.HTTPStatusError) -> LLMClientError: ...
 
