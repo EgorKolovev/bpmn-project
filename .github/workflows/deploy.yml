@@ -87,9 +87,6 @@ jobs:
               echo ""
               echo "=== ml recent logs (errors / LLM) ==="
               docker compose logs ml --tail 30 2>&1 | grep -iE "error|fail|gemini|budget|polza|generation|completed|edit|auth|reach|cap" | tail -15 || true
-              echo ""
-              echo "=== Direct Gemini API probe (raw error body) ==="
-              docker compose exec -T ml python -c "import base64;exec(base64.b64decode('aW1wb3J0IHVybGxpYi5yZXF1ZXN0LCB1cmxsaWIuZXJyb3IsIG9zCmsgPSBvcy5lbnZpcm9uLmdldCgiR0VNSU5JX0FQSV9LRVkiLCAiIikKcHJpbnQoImtleWxlbj0lZCAgZW5kc3dpdGhfYWxudW09JXMiICUgKGxlbihrKSwga1stMTpdLmlzYWxudW0oKSBpZiBrIGVsc2UgRmFsc2UpKQpib2R5ID0gYid7ImNvbnRlbnRzIjpbeyJwYXJ0cyI6W3sidGV4dCI6ImhpIn1dfV19Jwp1cmwgPSAiaHR0cHM6Ly9nZW5lcmF0aXZlbGFuZ3VhZ2UuZ29vZ2xlYXBpcy5jb20vdjFiZXRhL21vZGVscy9nZW1pbmktMy1mbGFzaC1wcmV2aWV3OmdlbmVyYXRlQ29udGVudCIKcmVxID0gdXJsbGliLnJlcXVlc3QuUmVxdWVzdCh1cmwsIGRhdGE9Ym9keSwgaGVhZGVycz17IngtZ29vZy1hcGkta2V5IjogaywgIkNvbnRlbnQtVHlwZSI6ICJhcHBsaWNhdGlvbi9qc29uIn0pCnRyeToKICAgIHIgPSB1cmxsaWIucmVxdWVzdC51cmxvcGVuKHJlcSwgdGltZW91dD0zMCkKICAgIHByaW50KCJESVJFQ1QgR0VNSU5JIE9LIiwgci5zdGF0dXMpCmV4Y2VwdCB1cmxsaWIuZXJyb3IuSFRUUEVycm9yIGFzIGU6CiAgICBwcmludCgiRElSRUNUIEdFTUlOSSBIVFRQIiwgZS5jb2RlLCBlLnJlYWQoKS5kZWNvZGUoKVs6NzAwXSkKZXhjZXB0IEV4Y2VwdGlvbiBhcyBleDoKICAgIHByaW50KCJESVJFQ1QgR0VNSU5JIiwgdHlwZShleCkuX19uYW1lX18sIHN0cihleClbOjMwMF0pCg==').decode())" || true
             else
               # Per-service redeploy (no-deps avoids restarting db etc.)
               docker compose pull ${{ inputs.service }}

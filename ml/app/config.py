@@ -92,13 +92,19 @@ USAGE_BUDGET_TIMEZONE = os.environ.get("USAGE_BUDGET_TIMEZONE", "UTC")
 REQUEST_CHAR_LIMIT = int(os.environ.get("REQUEST_CHAR_LIMIT", "20000"))
 BPMN_XML_CHAR_LIMIT = int(os.environ.get("BPMN_XML_CHAR_LIMIT", "250000"))
 
-# LLM backend: "gemini" (direct Google API) or "polza" (OpenAI-compatible via polza.ai).
-# Gemini is the default: `thinkingBudget` is a HARD token cap there, so
-# reasoning latency is bounded and predictable. Polza maps the budget to
-# `reasoning.effort` (low/medium/high), which is NOT token-capped — the
-# same config reasons far longer and can exceed the HTTP timeout. Polza
-# remains a fallback (flip LLM_BACKEND=polza if Gemini access drops).
-LLM_BACKEND = os.environ.get("LLM_BACKEND", "gemini")
+# LLM backend: "polza" (OpenAI-compatible via polza.ai — DEFAULT) or
+# "gemini" (direct Google API).
+#
+# Default is Polza because the production region is NOT served by Google's
+# Gemini API (direct calls 400 with FAILED_PRECONDITION "User location is
+# not supported"). Polza proxies the same gemini-3-flash-preview from a
+# supported region. Quality is identical; the Polza reasoning-runaway is
+# tamed via the conservative `_map_budget_to_effort` mapping + per-op
+# thinking budgets (edit/classify send none) + MAX_OUTPUT_TOKENS cap.
+#
+# Set LLM_BACKEND=gemini ONLY where Google serves the API (e.g. local dev
+# in a supported region) — there `thinkingBudget` is a hard token cap.
+LLM_BACKEND = os.environ.get("LLM_BACKEND", "polza")
 
 # Polza.ai settings
 POLZA_API_KEY = os.environ.get("POLZA_API_KEY", "")
