@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     session_secret_file: str = Field(default="/data/session_secret.txt")
     internal_api_key: str = Field(default="")
     session_token_max_age_days: int = Field(default=7)
+    # Timeout (seconds) the backend waits on a single ml /generate or
+    # /edit call. MUST exceed the ml service's own LLM_HTTP_TIMEOUT
+    # (default 240s) plus a margin so we never cut off a legitimate
+    # in-flight LLM response from the outside.
+    ml_http_timeout: float = Field(default=300.0)
     # `NoDecode` tells pydantic-settings NOT to JSON-decode the raw
     # env-var value (default list-field behaviour would try and fail
     # on "http://a,http://b"). The `@field_validator(mode="before")`
@@ -92,3 +97,4 @@ SESSION_SECRET_FILE: str = settings.session_secret_file
 INTERNAL_API_KEY: str = settings.internal_api_key
 SESSION_TOKEN_MAX_AGE_DAYS: int = settings.session_token_max_age_days
 CORS_ALLOWED_ORIGINS: list[str] = settings.cors_allowed_origins
+ML_HTTP_TIMEOUT: float = settings.ml_http_timeout

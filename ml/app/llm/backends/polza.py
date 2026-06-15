@@ -4,24 +4,32 @@ from typing import Any
 
 import httpx
 
-from app.config import GEMINI_THINKING_BUDGET
+from app.config import GEMINI_THINKING_BUDGET, LLM_HTTP_TIMEOUT
 from app.llm.errors import LLMClientError
 
 
 def _map_budget_to_effort(budget: int) -> str | None:
-    """Map Gemini-native `thinkingBudget` (token count) to OpenAI-style
-    `reasoning.effort` enum used by Polza.
+    """Map Gemini-native `thinkingBudget` (token count) to the OpenAI-style
+    `reasoning.effort` enum Polza accepts.
 
-    Polza's OpenAI-compatible surface doesn't accept raw token counts —
-    only low/medium/high. Keep thresholds aligned with what we've
-    benchmarked on Gemini direct: ≤ 2048 ≈ low, 2049-5000 ≈ medium,
-    > 5000 ≈ high. Budget = 0 → no reasoning.
+    CRITICAL DIFFERENCE FROM GEMINI: on Gemini, `thinkingBudget=N` is a
+    HARD token cap on reasoning. On Polza, `reasoning.effort` is a
+    qualitative level with NO token cap — the upstream model decides how
+    long to think. For `google/gemini-3-flash-preview` via Polza,
+    `effort=medium` reasons for tens of thousands of tokens (observed
+    ~65K combined → ~218s → HTTP timeout → 502, prod incident 2026-06-14).
+
+    So the buckets here are deliberately conservative: only a very large
+    budget maps to medium/high. The default budget (4096) maps to "low",
+    which on gemini-3-flash already yields substantial reasoning.
+    Combined with the MAX_OUTPUT_TOKENS hard cap, total latency stays
+    bounded regardless of effort. Budget = 0 → no reasoning at all.
     """
     if budget <= 0:
         return None
-    if budget <= 2048:
+    if budget <= 4096:
         return "low"
-    if budget <= 5000:
+    if budget <= 12288:
         return "medium"
     return "high"
 
@@ -32,10 +40,11 @@ class PolzaBackend:
     def __init__(self, api_key: str, model: str, base_url: str, max_output_tokens: int):
         self.model = model
         self.max_output_tokens = max_output_tokens
-        # 180s matches GeminiBackend — gives thinking + long XML output
-        # room to complete without HTTP timeout.
+        # Env-configurable timeout (LLM_HTTP_TIMEOUT, default 240s). Polza
+        # reasoning is NOT token-capped, so this must comfortably exceed
+        # the worst case implied by MAX_OUTPUT_TOKENS. See config.
         self.http_client = httpx.AsyncClient(
-            timeout=180.0,
+            timeout=LLM_HTTP_TIMEOUT,
             base_url=base_url,
             headers={
                 "Authorization": f"Bearer {api_key}",
@@ -59,6 +68,7 @@ class PolzaBackend:
         system_prompt: str,
         user_prompt: str,
         response_schema: dict[str, Any] | None = None,
+        thinking_budget: int | None = None,
     ) -> tuple[str, int, int]:
         """Returns (text, prompt_tokens, output_tokens)."""
         # OpenAI-compatible strict-schema mode via response_format=json_schema.
@@ -92,7 +102,9 @@ class PolzaBackend:
         # Verified experimentally: `reasoning: {effort: "high"}` is
         # the form Polza accepts; `reasoning_effort` (flat) and
         # `thinking: {budget_tokens: ...}` are silently ignored.
-        effort = _map_budget_to_effort(GEMINI_THINKING_BUDGET)
+        # Per-call override (edit/classify) falls back to module default.
+        budget = thinking_budget if thinking_budget is not None else GEMINI_THINKING_BUDGET
+        effort = _map_budget_to_effort(budget)
         if effort is not None:
             payload["reasoning"] = {"effort": effort}
         response = await self.http_client.post("/chat/completions", json=payload)

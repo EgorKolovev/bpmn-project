@@ -20,7 +20,7 @@ from app.bpmn_fix import (
 )
 from app.bpmn_layout import layout_bpmn
 from app.budget import BudgetTracker, DailyBudgetExceededError, format_usd_from_nanodollars
-from app.config import MAX_OUTPUT_TOKENS
+from app.config import CLASSIFY_THINKING_BUDGET, EDIT_THINKING_BUDGET, MAX_OUTPUT_TOKENS
 from app.llm.backends import GeminiBackend, PolzaBackend
 from app.llm.errors import LLMClientError
 from app.llm.json_recovery import (
@@ -74,6 +74,7 @@ class LLMClient:
         system_prompt: str,
         user_prompt: str,
         response_schema: dict[str, Any] | None = None,
+        thinking_budget: int | None = None,
     ) -> str:
         reservation = None
 
@@ -83,7 +84,7 @@ class LLMClient:
             )
             reservation = self.budget_tracker.reserve_for_call(prompt_tokens)
             text, actual_prompt_tokens, actual_output_tokens = await self.backend.generate(
-                system_prompt, user_prompt, response_schema
+                system_prompt, user_prompt, response_schema, thinking_budget
             )
         except DailyBudgetExceededError:
             raise
@@ -236,7 +237,12 @@ class LLMClient:
         max_retries = 3
         error: str | None = None
         for attempt in range(max_retries):
-            raw = await self._call_llm(SYSTEM_PROMPT_EDIT, user_prompt, EDIT_RESPONSE_SCHEMA)
+            raw = await self._call_llm(
+                SYSTEM_PROMPT_EDIT,
+                user_prompt,
+                EDIT_RESPONSE_SCHEMA,
+                thinking_budget=EDIT_THINKING_BUDGET,
+            )
             try:
                 result = self._extract_json(raw)
             except ValueError as exc:
@@ -279,7 +285,12 @@ class LLMClient:
     async def classify(self, text: str) -> dict:
         """Classify whether input is a valid BPMN request."""
         logger.info("Calling LLM for input classification")
-        raw = await self._call_llm(SYSTEM_PROMPT_CLASSIFY, text, CLASSIFY_RESPONSE_SCHEMA)
+        raw = await self._call_llm(
+            SYSTEM_PROMPT_CLASSIFY,
+            text,
+            CLASSIFY_RESPONSE_SCHEMA,
+            thinking_budget=CLASSIFY_THINKING_BUDGET,
+        )
         result = self._extract_json(raw)
         return {
             "is_valid": bool(result.get("is_valid", False)),

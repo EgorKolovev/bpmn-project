@@ -251,6 +251,69 @@ async def test_classify_rejection_passes_reason(monkeypatch, tmp_path):
     assert "weather" in result["reason"].lower() or "business" in result["reason"].lower()
 
 
+def _last_thinking_budget(seq) -> int:
+    """thinkingBudget from the last generateContent request body captured."""
+    gen_calls = [r for r in seq.requests if "generateContent" in str(r.url)]
+    assert gen_calls, "no generateContent request captured"
+    body = json.loads(gen_calls[-1].content)
+    return body["generationConfig"]["thinkingConfig"]["thinkingBudget"]
+
+
+@pytest.mark.asyncio
+async def test_generate_uses_full_thinking_budget(monkeypatch, tmp_path):
+    """Generate (from scratch) must use the full GEMINI_THINKING_BUDGET —
+    reasoning is what gets lanes + branching right on complex specs."""
+    from app import config
+
+    client, seq = _make_gemini_client(
+        monkeypatch,
+        tmp_path,
+        {
+            "countTokens": make_gemini_count_response(),
+            "generateContent": _gemini_response_body(VALID_BPMN_XML_NO_DI, "Full Think"),
+        },
+    )
+    await client.generate("Order fulfillment.")
+    assert _last_thinking_budget(seq) == config.GEMINI_THINKING_BUDGET
+
+
+@pytest.mark.asyncio
+async def test_edit_uses_low_thinking_budget(monkeypatch, tmp_path):
+    """Edit applies a delta — it must use EDIT_THINKING_BUDGET (default 0),
+    NOT the full generate budget. At budget=4096 edit measured ~124s vs
+    ~6s at 0 (prod incident 2026-06-14). Regression guard."""
+    from app import config
+
+    client, seq = _make_gemini_client(
+        monkeypatch,
+        tmp_path,
+        {
+            "countTokens": make_gemini_count_response(),
+            "generateContent": _gemini_edit_response(VALID_BPMN_XML_NO_DI),
+        },
+    )
+    await client.edit("Add a verification step.", VALID_BPMN_XML_NO_DI)
+    assert _last_thinking_budget(seq) == config.EDIT_THINKING_BUDGET
+
+
+@pytest.mark.asyncio
+async def test_classify_uses_classify_thinking_budget(monkeypatch, tmp_path):
+    """Classify is a boolean — no reasoning needed; must use
+    CLASSIFY_THINKING_BUDGET (default 0)."""
+    from app import config
+
+    client, seq = _make_gemini_client(
+        monkeypatch,
+        tmp_path,
+        {
+            "countTokens": make_gemini_count_response(),
+            "generateContent": _gemini_classify_response(True),
+        },
+    )
+    await client.classify("Order fulfillment process")
+    assert _last_thinking_budget(seq) == config.CLASSIFY_THINKING_BUDGET
+
+
 # ---------------------------------------------------------------------------
 # Retry-loop coverage — bad responses, then a good one.
 # ---------------------------------------------------------------------------
@@ -479,9 +542,11 @@ async def test_polza_reasoning_effort_maps_from_thinking_budget(monkeypatch, tmp
 
     await client.generate("Order fulfillment.")
 
-    # Default GEMINI_THINKING_BUDGET = 4096 → maps to "medium".
-    # See _map_budget_to_effort: ≤2048 = low, ≤5000 = medium, >5000 = high.
-    assert captured.get("reasoning", {}).get("effort") == "medium", captured
+    # Default GEMINI_THINKING_BUDGET = 4096 → maps to "low".
+    # See _map_budget_to_effort: ≤4096 = low, ≤12288 = medium, >12288 = high.
+    # (Conservative buckets prevent the unbounded-reasoning runaway that
+    # caused the 2026-06-14 edit/generate 502s.)
+    assert captured.get("reasoning", {}).get("effort") == "low", captured
 
 
 @pytest.mark.asyncio
